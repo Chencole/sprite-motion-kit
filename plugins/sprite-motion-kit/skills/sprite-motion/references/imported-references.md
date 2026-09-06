@@ -75,3 +75,8 @@ that all generated poses will be natural.
 ### Explicit diagnostic sample
 
 When the user explicitly requests a single-character preview despite unavailable structured canvas controls, `generation-check --diagnostic` creates diagnostic-only packets with no invented API arguments. This does not relax final export or batch acceptance. Show all requested actions and actual source/crop defects; do not retry automatically or replace game assets. The default production preflight still rejects prompt-only adapters.
+
+
+### Automatic safe cutting
+
+The diagnostic exporter detects transparent separators near the requested grid before extracting any frame. Schema 2 crop plans partition the entire source into ordered cells without dropping margins or gutters. Unequal source cell sizes are padded only at right/bottom to a shared canvas; body pixels are not resized or recentered. The source hash and exact boxes are recorded for reuse by pose checks and production packing. Lack of clear separators, empty cells or foreground touching a cut edge stops export before any output directory is created. Safe cuts do not prove correct poses or a consistent generated ground baseline.

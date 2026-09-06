@@ -287,7 +287,11 @@ def extract(raw, columns, rows, count, background='auto',rectangles=None):
         if b[0]==0 or b[1]==0 or b[2]==f.width or b[3]==f.height:
             raise ValueError(f'Frame {i} touches a cell edge. Check cropping/grid before export.')
         frames.append(f)
-    return frames
+    w=max(f.width for f in frames);h=max(f.height for f in frames)
+    padded=[]
+    for f in frames:
+        canvas=Image.new('RGBA',(w,h));canvas.alpha_composite(f,(0,0));padded.append(canvas)
+    return padded
 
 def align(frames, action, tile=(512,448), body_height=316):
     tw,th=tile
@@ -388,6 +392,7 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     if data['schema']==3 and background=='auto':background=data['background_mode']
     crop_data=None;rectangles=None
     if crop_plan is not None:crop_data,rectangles=contract_module().load_crop(crop_plan,image,columns,rows,count,require_review=not draft)
+    if rectangles is not None:contract_module().validate_pixels(remove_background(raw,background),rectangles)
     sources=extract(raw,columns,rows,count,background,rectangles)
     sequence_result=None
     if not draft:

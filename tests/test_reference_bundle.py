@@ -53,6 +53,14 @@ class BundleTests(unittest.TestCase):
             self.assertTrue(all(not a['accepted'] and a['warnings'] for a in report['actions']))
             with Image.open(d/'diagnostic/walk-diagnostic.png') as atlas:
                 self.assertEqual(atlas.size,(256,64));self.assertEqual(atlas.getpixel((8,16)),(165,42,42,255));self.assertEqual(atlas.getpixel((0,0))[3],0)
+    def test_preview_clipping_failure_writes_no_output_or_job_changes(self):
+        import source_preview
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);data=self.ready(d);before=(d/'job/job.json').read_bytes()
+            sheet=Image.new('RGB',(128,64),'magenta');sheet.paste('brown',(2,2,126,62));sheet.save(d/'sheet.png')
+            motion.write(d/'inputs.json',{a:str(d/'sheet.png') for a in data['actions']})
+            with self.assertRaisesRegex(ValueError,'No safe'):source_preview.preview(d/'job',d/'inputs.json',d/'diagnostic')
+            self.assertFalse((d/'diagnostic').exists());self.assertEqual(before,(d/'job/job.json').read_bytes())
     def test_provider_controls_are_real_arguments_for_all_five(self):
         with tempfile.TemporaryDirectory() as t:
             d=Path(t);self.ready(d)

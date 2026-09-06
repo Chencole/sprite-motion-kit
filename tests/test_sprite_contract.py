@@ -37,6 +37,24 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'same canvas'):contract.boxes(bad,(100,100),2,2,4)
         bad=copy.deepcopy(p);bad['boxes'][0],bad['boxes'][1]=bad['boxes'][1],bad['boxes'][0]
         with self.assertRaisesRegex(ValueError,'ordered'):contract.boxes(bad,(100,100),2,2,4)
+    def test_automatic_separator_moves_off_body_and_preserves_pixels(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);im=Image.new('RGBA',(80,80))
+            for x in [5,45]:
+                im.paste('red',(x,10,x+12,42));im.paste('blue',(x,52,x+12,72))
+            im.save(d/'s.png');plan=contract.automatic_plan(d/'s.png',im,2,2,4)
+            self.assertGreater(plan['boxes'][0][3],42)
+            frames=motion.extract(im,2,2,4,'alpha',plan['boxes'])
+            self.assertEqual(len(set(f.size for f in frames)),1)
+            self.assertEqual(sum(sum(f.getchannel('A').getdata()) for f in frames),sum(im.getchannel('A').getdata()))
+    def test_no_safe_separator_and_discarded_weapon_are_rejected(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);im=Image.new('RGBA',(80,40));im.paste('red',(5,10,75,30));im.save(d/'s.png')
+            with self.assertRaisesRegex(ValueError,'No safe'):contract.automatic_plan(d/'s.png',im,2,1,2)
+            with self.assertRaisesRegex(ValueError,'discard|cut edge'):contract.validate_pixels(im,[[0,0,20,40],[60,0,80,40]])
+    def test_automatic_plan_cannot_hide_pixels_in_gaps(self):
+        plan={'schema':2,'method':'transparent_separators','image_size':[80,40],'grid':[2,1,2],'boxes':[[0,0,35,40],[45,0,80,40]]}
+        with self.assertRaisesRegex(ValueError,'discard'):contract.boxes(plan,(80,40),2,1,2)
     def test_loop_endpoint_checks_expected_motion_not_identical_pixels(self):
         refs=[{'hip':[20,20],'hand':[30+x,30]} for x in [0,3,6,3]]
         obs=[{'frame':i,'points':copy.deepcopy(r)} for i,r in enumerate(refs)]

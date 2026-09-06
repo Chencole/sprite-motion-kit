@@ -7,6 +7,7 @@ import argparse,json,math
 from pathlib import Path
 from PIL import Image
 import motion
+import sprite_contract as contract
 
 def preview(job,images,out):
     job,data=motion.job_read(job);motion.verify_job_contract(job,data)
@@ -19,7 +20,9 @@ def preview(job,images,out):
         with Image.open(source) as raw:
             clean=motion.remove_background(raw,data.get('background_mode','auto'))
         cols,rows,n=spec['columns'],spec['rows'],spec['count']
-        w,h=math.ceil(clean.width/cols),math.ceil(clean.height/rows)
+        plan=contract.automatic_plan(source,clean,cols,rows,n)
+        rects=plan['boxes']
+        w,h=max(r[2]-r[0] for r in rects),max(r[3]-r[1] for r in rects)
         atlas=Image.new('RGBA',(w*n,h));warnings=[]
         expected=spec.get('tile',[w,h])
         if abs((clean.width/cols)/(clean.height/rows)-expected[0]/expected[1])>.04:
@@ -27,20 +30,24 @@ def preview(job,images,out):
         frames=[]
         for i in range(n):
             x,y=i%cols,i//cols
-            box=(round(x*clean.width/cols),round(y*clean.height/rows),round((x+1)*clean.width/cols),round((y+1)*clean.height/rows))
+            box=rects[i]
             frame=clean.crop(box);bounds=frame.getbbox()
             if not bounds:warnings.append(f'第{i+1}帧为空。')
             elif bounds[0]==0 or bounds[1]==0 or bounds[2]==frame.width or bounds[3]==frame.height:
                 warnings.append(f'第{i+1}帧碰到格子边缘，可能跨格或被裁切。')
             atlas.alpha_composite(frame,(i*w,0));frames.append({'source_box':box,'translation':[0,0],'scale':1})
-        prepared.append((action,atlas))
+        prepared.append((action,atlas,plan,source))
         clip={'name':action,'tile':[w,h],'count':n,'seconds':spec['seconds'],'phases':spec.get('phases',[i/n for i in range(n)]),'loop':spec['loop'],'draft':True,'sequence_check':None,'warnings':warnings,'reference':motion.data_url(job/spec['reference']),'reference_layout':spec['reference_layout']}
         entries.append(clip);records.append({'action':action,'source':str(source),'frames':frames,'warnings':warnings,'accepted':False})
     out.mkdir(parents=True)
-    for entry,(action,atlas) in zip(entries,prepared):
+    for entry,(action,atlas,plan,source) in zip(entries,prepared):
+        motion.write(out/(action+'-crop.json'),plan)
+        contract.crop_overlay(source,out/(action+'-crop.json'),out/(action+'-crop.png'))
+        for i in range(entry['count']):
+            atlas.crop((i*entry['tile'][0],0,(i+1)*entry['tile'][0],entry['tile'][1])).save(out/f'{action}-frame-{i:03}.png')
         path=out/(action+'-diagnostic.png');atlas.save(path);entry['character']=motion.data_url(path)
     template=(motion.SKILL/'assets/review.html').read_text(encoding='utf-8')
-    template=template.replace('动作参考与角色同步播放 · Reference / generated character','五动作诊断单例 · 原图固定网格直接播放 · 未通过验收')
+    template=template.replace('动作参考与角色同步播放 · Reference / generated character','五动作诊断单例 · 插件自动透明间隔裁切 · 未通过验收')
     (out/'review.html').write_text(template.replace('__CLIPS__',json.dumps(entries,ensure_ascii=False).replace('<','\\u003c')),encoding='utf-8')
     motion.write(out/'diagnostics.json',{'status':'diagnostic_only','job_modified':False,'new_generation_calls':0,'actions':records})
     return {'preview':str(out/'review.html'),'actions':list(data['actions']),'status':'diagnostic_only'}
