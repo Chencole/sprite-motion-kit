@@ -321,6 +321,10 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     phases=phases if phases is not None else spec.get('phases',[i/count for i in range(count)])
     if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>=1 for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
         raise ValueError('Phases must match frame count and strictly increase from zero to below one')
+    if not draft:
+        expected_phases=spec.get('phases',[i/spec['count'] for i in range(spec['count'])])
+        if (columns,rows,count)!=(spec['columns'],spec['rows'],spec['count']) or list(phases)!=list(expected_phases):
+            raise ValueError('Export grid, frame count and phases must match the pose-review contract. Prepare and review a revised job; use --draft only for diagnostics.')
     raw=Image.open(image)
     sources=extract(raw,columns,rows,count,background)
     sequence_result=None

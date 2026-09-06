@@ -76,4 +76,18 @@ class PoseQualityTests(unittest.TestCase):
             self.assertEqual([f['frame'] for f in split['frames']],[0,1,2,3])
             self.assertEqual([f['phase'] for f in split['frames']],[0,.25,.5,.75])
 
+    def test_changed_export_layout_is_rejected_before_touching_previous_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            d=Path(d);Image.new('RGBA',(20,20),'blue').save(d/'char.png')
+            motion.prepare(d/'char.png',d/'job',actions=['walk'],legacy_reference_reason='Fixture for reviewed layout')
+            sheet=Image.new('RGBA',(400,200))
+            for i in range(8):sheet.paste('blue',(i%4*100+30,i//4*100+20,i%4*100+70,i//4*100+80))
+            sheet.save(d/'source.png');motion.pack(d/'job','walk',d/'source.png',draft=True)
+            before={str(p.relative_to(d/'job')):p.read_bytes() for p in (d/'job').rglob('*') if p.is_file()}
+            for overrides in [{'columns':2,'rows':4},{'count':4},{'phases':[0,.1,.2,.3,.4,.5,.6,.7]}]:
+                with self.assertRaisesRegex(ValueError,'pose-review contract'):
+                    motion.pack(d/'job','walk',d/'source.png',observations=d/'unused-observation.json',**overrides)
+                after={str(p.relative_to(d/'job')):p.read_bytes() for p in (d/'job').rglob('*') if p.is_file()}
+                self.assertEqual(before,after)
+
 if __name__=='__main__':unittest.main()
