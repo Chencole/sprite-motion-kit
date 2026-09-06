@@ -29,24 +29,34 @@ No Blender, external website, account or model credits are required for the loca
 
 The agent:
 
-1. Interprets the requested body, actions, view and timing.
+1. Records the complete requested character/action coverage, then interprets body, view and timing.
 2. Authors a JSON rig and whole-body key poses, including attached weapon endpoints and extra limbs as needed.
 3. Validates and renders that custom motion locally; inspects and corrects its poses.
 4. Feeds each actual pose guide and the original character to the available image tool.
 5. Checks the generated grid, transparency and continuity, exports frames/atlases, and opens the reference/character reviewer.
+6. Checks the whole batch against that coverage. Missing run/attack/etc. remains incomplete even if a death clip is finished. Current exported-art reviews are required before `batch.py finish` succeeds.
+
+See the [batch coverage contract](plugins/sprite-motion-kit/skills/sprite-motion/references/batch-coverage.md) for the required manifest and completion commands. Action IDs are user-defined. Scope is recorded before individual jobs so a partial repair cannot silently replace a full animation-set request.
 
 The default custom-plan scaffold contains neutral keys and is marked `needs_motion_design`. The AI must author the requested action. Familiar sample motions are explicitly opt-in examples; they are not a closed action menu or a claim of finished animation quality.
 
 ## Agent / contributor commands
 
 ```sh
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/batch.py create --spec scope.json --out jobs/batch
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py create --body humanoid --actions overhead_cut thrust collapse --out jobs/plan.json
 # The AI edits joints, key poses, timings and descriptions, then marks the plan authored.
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py validate --plan jobs/plan.json
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py render --plan jobs/plan.json --out jobs/reference
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py prepare --character character.png --motion-plan jobs/plan.json --out jobs/character
+# Inspect actual references and record matching hashes/checks before generation.
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py review-reference --job jobs/character --report reference-review.json
 # The host image tool generates the action sheet from this job's guide and character.
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py pack --job jobs/character --action overhead_cut --image generated-cut.png
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/batch.py attach --batch jobs/batch --character guard --job jobs/character
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/batch.py status --batch jobs/batch
+# Review all exported actions, then finish; missing actions cause a nonzero exit.
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/batch.py finish --batch jobs/batch
 ```
 
 See the [motion contract](plugins/sprite-motion-kit/skills/sprite-motion/references/motion-contract.md) for coordinates, joint hierarchy, arbitrary action IDs, root movement, camera, timing and loop rules. Humanoid and quadruped topologies are convenient scaffolds; the JSON can define other joint trees without editing the renderer.
@@ -55,7 +65,7 @@ See the [motion contract](plugins/sprite-motion-kit/skills/sprite-motion/referen
 
 ## Alignment and limits
 
-Custom jobs use a fixed camera and shared canvas transform. Jump height, lunges and full-size fallen bodies survive export; frames are not independently floor-aligned or stretched. Loop endpoints must match. One-shot actions hold their final frame. The original CC0 side-view walk/death workflow remains available without `--motion-plan`.
+Custom jobs use a fixed camera and shared canvas transform. Jump height, lunges and full-size fallen bodies survive export; frames are not independently floor-aligned or stretched. Loop endpoints must match. One-shot actions hold their final frame. The original CC0 side-view walk/death workflow requires an explicit `--legacy-reference-reason` when used without `--motion-plan`.
 
 The renderer is a shaded skeletal proxy, not a physics or character-animation model. The AI must inspect support, balance, collisions and pose transitions. The image generator receives a visual guide, not guaranteed hard skeletal conditioning; it may still introduce costume or anatomical errors. Technical export never marks the art visually approved.
 
