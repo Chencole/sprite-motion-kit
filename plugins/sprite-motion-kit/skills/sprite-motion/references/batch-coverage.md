@@ -2,6 +2,8 @@
 
 Extract the user's entire requested character/action scope before preparing individual jobs. Do not convert “fix the death animation” during an existing full-character replacement into a death-only replacement scope. Preserve earlier required actions unless the user changes the scope. This manifest tracks delivery coverage separately from per-action pose design.
 
+For an unspecified complete ordinary humanoid action set, start with at least five action families: walk, run, attack, death and jump. Expand these from the user's needs (multiple attacks, casting, hit reactions, climbing, and so on). These are a coverage baseline, not a fixed action enum or a universal anatomical requirement. A specifically requested single-action repair stays single-action; a flying or otherwise non-humanoid creature needs appropriate substitutions explained in its scope. Never silently drop an explicitly requested family. A diagnostic walk-only job remains partial when the enclosing scope requires all five; even a visually accepted walk cannot complete that set.
+
 Create a JSON specification (paths relative to this file):
 
 ```json
