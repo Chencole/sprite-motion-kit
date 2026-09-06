@@ -33,6 +33,8 @@ def custom_plan():
         key(0),key(.22,20,-20,[0,-.08,0],knee=-50),key(.4,60,-20,[0,.32,0],knee=-20),
         key(.60,80,-20,[0,.8,0],knee=-30),key(.83,40,-15,[0,.32,0],knee=-20),
         key(1.0,20,-20,[0,-.08,0],knee=-50),key(1.2)])
+    p['character_analysis']={'anatomy':'Two legs, two arms, sword attached to near hand','mass_and_balance':'Human mass with planted feet before attacks','equipment':'One sword changes reach and arm swing'}
+    for name,a in p['actions'].items():a['design']={'intent':a['description'],'support_and_contact':'Feet support body; hop has an airborne phase','phases':'Anticipation, active action, then recovery','end_state':'Stable upright pose after recovery'}
     return p
 
 class CustomMotionTests(unittest.TestCase):
@@ -97,13 +99,48 @@ class CustomMotionTests(unittest.TestCase):
         im=Image.new('RGB',(100,100),'magenta');im.paste((90,20,140),(20,20,80,80))
         keyed=motion.remove_background(im,'magenta')
         self.assertEqual(keyed.getpixel((0,0))[3],0);self.assertEqual(keyed.getpixel((40,40))[3],255)
+    def test_default_prepare_cannot_silently_use_legacy(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaisesRegex(ValueError,'custom motion plan is required'):
+                motion.prepare('unused.png',Path(d)/'job')
+            self.assertFalse((Path(d)/'job').exists())
+    def test_missing_character_analysis_and_action_design_fail(self):
+        p=custom_plan()
+        for section,field in [('character_analysis','mass_and_balance'),('action','support_and_contact')]:
+            q=copy.deepcopy(p)
+            del (q['character_analysis'] if section=='character_analysis' else q['actions']['hop']['design'])[field]
+            with self.assertRaises(ValueError):motion.validate_design(q)
+    def test_authored_label_cannot_approve_neutral_scaffold(self):
+        p=custom_plan();a=p['actions']['lunge'];a['keys']=[copy.deepcopy(a['keys'][0]) for _ in range(3)]
+        for k,t in zip(a['keys'],[0,.5,1.1]):k['time']=t
+        with self.assertRaisesRegex(ValueError,'neutral scaffold'):motion.validate_design(p)
+    def test_review_gate_and_changed_inputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            d=Path(d);character=d/'character.png';Image.new('RGBA',(20,30),'blue').save(character)
+            p=custom_plan();p['actions']={'hop':p['actions']['hop']};p['frame_size']=[64,64]
+            plan=d/'plan.json';m.write(plan,p);job=d/'job'
+            result=motion.prepare(character,job,motion_plan=plan)
+            self.assertEqual(result['requests'],[]);self.assertFalse((job/'hop-request.txt').exists())
+            with self.assertRaisesRegex(ValueError,'not been reviewed'):motion.pack(job,'hop',job/'reference/hop-guide.png')
+            data=m.read(job/'job.json');report={'input_hashes':data['input_hashes'],'actions':{'hop':{k:True for k in ['anatomy','support_and_contact','timing','camera','end_state']}}}
+            report['actions']['hop']['notes']='Engineering fixture: body rises above floor and returns upright.'
+            rp=d/'review.json';m.write(rp,report);motion.review_reference(job,rp)
+            self.assertTrue((job/'hop-request.txt').is_file())
+            self.assertIn('Human mass',(job/'hop-request.txt').read_text())
+            for target in ['character.png','reference/motion-plan.json','reference/hop-guide.png']:
+                file=job/target;original=file.read_bytes();file.write_bytes(original+b' ')
+                with self.assertRaises(ValueError):motion.pack(job,'hop',job/'reference/hop-guide.png')
+                file.write_bytes(original)
+
     def test_custom_render_and_pack_roundtrip(self):
         # Renderer output is engineering input for this test, not AI character art.
         with tempfile.TemporaryDirectory() as d:
             p=custom_plan();p['actions']={'hop':p['actions']['hop']};p['frame_size']=[160,160]
             job=Path(d)/'job';job.mkdir();m.render(p,job/'reference',preview_count=4)
             guide=m.read(job/'reference/guide.json');a=guide['actions']['hop'];a.update(status='awaiting_generation',guide='reference/hop-guide.png',reference='reference/hop-reference.png')
-            m.write(job/'job.json',{'schema':2,'actions':{'hop':a},'plan_sha256':guide['plan_sha256']})
+            Image.new('RGBA',(20,30),'blue').save(job/'character.png')
+            data={'schema':2,'character':'character.png','motion_plan':'reference/motion-plan.json','actions':{'hop':a},'plan_sha256':guide['plan_sha256'],'reference_review':{'engineering_fixture':True}}
+            data['input_hashes']=motion.fingerprints(job,data);m.write(job/'job.json',data)
             motion.pack(job,'hop',job/'reference/hop-guide.png')
             clip=m.read(job/'hop/clip.json');self.assertEqual(clip['alignment'],'reference_canvas');self.assertFalse(clip['loop'])
             self.assertEqual(clip['plan_sha256'],guide['plan_sha256'])

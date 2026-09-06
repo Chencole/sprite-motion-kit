@@ -24,7 +24,7 @@ PRESETS = {
 }
 
 def read(path):
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    return json.loads(Path(path).read_text(encoding='utf-8-sig'))
 
 def write(path, value):
     Path(path).write_text(json.dumps(value,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -59,8 +59,11 @@ def request_text(action, character_name):
         'Preserve distinctive anatomy and equipment; keep all limbs and any dropped weapon inside each cell. '
         'Final frames settle into the same corpse, which stays still. This action plays once and does not loop.\n')
 
-def prepare(character, out, actions=None, name='the supplied character', motion_plan=None):
-    if motion_plan is not None:return prepare_custom(character,out,motion_plan,actions,name)
+def prepare(character, out, actions=None, name='the supplied character', motion_plan=None, legacy_reference_reason=None):
+    if motion_plan is not None:
+        if legacy_reference_reason is not None:raise ValueError('Choose a custom plan or explicit legacy reuse, not both')
+        return prepare_custom(character,out,motion_plan,actions,name)
+    require_text(legacy_reference_reason,'A custom motion plan is required. Legacy reuse requires --legacy-reference-reason explaining why the approved reference fits this character.')
     actions=actions or tuple(PRESETS)
     if not actions or any(a not in PRESETS for a in actions):raise ValueError('Choose walk and/or death')
     character=Path(character).resolve()
@@ -70,7 +73,7 @@ def prepare(character, out, actions=None, name='the supplied character', motion_
     if out.exists() and any(out.iterdir()):raise ValueError('Use a new empty job directory; existing work is preserved')
     out.mkdir(parents=True,exist_ok=True)
     Image.open(character).convert('RGBA').save(out/'character.png')
-    data={'schema':1,'name':name,'status':'ready_for_generation','character':'character.png','actions':{}}
+    data={'schema':1,'legacy_reference_reason':legacy_reference_reason,'name':name,'status':'ready_for_generation','character':'character.png','actions':{}}
     for action in actions:
         spec=dict(PRESETS[action])
         shutil.copy2(SKILL/f'assets/{action}-guide.png',out/f'{action}-guide.png')
@@ -87,9 +90,58 @@ def mannequin_module():
     spec=importlib.util.spec_from_file_location('sprite_mannequin',Path(__file__).with_name('mannequin.py'))
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
+def require_text(value,label):
+    if not isinstance(value,str) or not value.strip() or value.strip().lower() in ['todo','tbd','none','ai:']:
+        raise ValueError(label)
+
+def validate_design(plan):
+    analysis=plan.get('character_analysis',{})
+    for field in ['anatomy','mass_and_balance','equipment']:
+        require_text(analysis.get(field),'Missing character_analysis.'+field)
+    mannequin=mannequin_module()
+    for name,action in plan['actions'].items():
+        design=action.get('design',{})
+        for field in ['intent','support_and_contact','phases','end_state']:
+            require_text(design.get(field),'Missing '+name+'.design.'+field)
+        points=[mannequin.positions(plan['joints'],k) for k in action['keys']]
+        if len(points)<3 or not any(any(np.linalg.norm(p[j]-points[0][j])>1e-5 for j in p) for p in points[1:]):
+            raise ValueError(name+': neutral scaffold is not an authored motion; provide changing whole-body keys')
+
+def fingerprints(job,data):
+    paths={'plan':data['motion_plan'],'character':data['character']}
+    paths.update({'guide:'+a:s['guide'] for a,s in data['actions'].items()})
+    return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
+
+def verify_job_contract(job,data):
+    if data['schema']==1:
+        require_text(data.get('legacy_reference_reason'),'Legacy job lacks explicit reuse reason; prepare again with a custom plan or explicit compatibility choice')
+        return
+    validate_design(read(job/data['motion_plan']))
+    if not data.get('input_hashes') or fingerprints(job,data)!=data['input_hashes']:
+        raise ValueError('Character, plan or guide changed; prepare a new reviewed job before generation/export')
+
+def review_reference(job,report):
+    job,data=job_read(job);verify_job_contract(job,data)
+    if data['schema']!=2:raise ValueError('Reference review reports apply to custom jobs')
+    if data.get('reference_review'):raise ValueError('Reference already reviewed; prepare a new job to revise it')
+    report=read(report)
+    if report.get('input_hashes')!=data['input_hashes']:raise ValueError('Review must identify the current character, plan and guides using input_hashes from job.json')
+    for name,spec in data['actions'].items():
+        check=report.get('actions',{}).get(name,{})
+        for field in ['anatomy','support_and_contact','timing','camera','end_state']:
+            if check.get(field) is not True:raise ValueError(name+': reference review must pass '+field)
+        require_text(check.get('notes'),name+': document observed reference motion in review notes')
+    for spec in data['actions'].values():
+        (job/spec['request']).write_text(spec.pop('request_draft'),encoding='utf-8')
+        spec['status']='awaiting_generation'
+    data['reference_review']=report;data['status']='ready_for_generation';write(job/'job.json',data)
+    return {'status':data['status'],'requests':[str(job/s['request']) for s in data['actions'].values()],
+            'notice':'Review records agent observations; it does not automatically certify animation quality.'}
+
 def prepare_custom(character,out,motion_plan,actions,name):
     mannequin=mannequin_module();plan=read(motion_plan);mannequin.validate(plan)
     if plan.get('design_status')!='authored':raise ValueError('Host AI must design this motion plan and set design_status to authored before character generation preparation. Render draft guides directly for inspection.')
+    validate_design(plan)
     if actions is not None:
         if not actions or any(a not in plan['actions'] for a in actions):raise ValueError('Requested action is missing from the motion plan')
         plan['actions']={a:plan['actions'][a] for a in actions}
@@ -106,17 +158,20 @@ def prepare_custom(character,out,motion_plan,actions,name):
         prompt=(f'Create {spec["count"]} coherent full-body {action} key poses of {name}. '
                 f'Reference 1 is this job\'s custom 3D mannequin guide, {spec["columns"]} columns by {spec["rows"]} rows; reference 2 is character appearance. '
                 f'Motion intent: {spec.get("description","")}. '
+                f'Character analysis: {json.dumps(plan["character_analysis"],ensure_ascii=False)}. '
+                f'Authored action design: {json.dumps(plan["actions"][action]["design"],ensure_ascii=False)}. '
                 f'Camera azimuth {guide["camera"]["azimuth"]} degrees, elevation {guide["camera"]["elevation"]} degrees; match the guide exactly. '
                 'Preserve anatomy, number of limbs, body scale, costume and equipment. The guide colors identify limbs, not costume colors. '
                 'Copy each whole-body pose in order. Keep equal cells, padding, the SAME camera framing and floor coordinate in every frame; '
                 'preserve jump height and falling/root displacement rather than centering or grounding each pose separately. '
                 'Use true transparent alpha, or uniform magenta only if the character does not contain magenta. No labels, grid lines, scenery or baked checkerboard. '
                 +('Complete a seamless cycle using opposite support phases; do not duplicate the first pose at the end.' if spec['loop'] else 'Play the whole action once in sequence, ending in the last intended pose; do not loop or shrink away.')+'\n')
-        (out/spec['request']).write_text(prompt,encoding='utf-8');data['actions'][action]=spec
+        spec['request_draft']=prompt;data['actions'][action]=spec
+    data['input_hashes']=fingerprints(out,data)
     write(out/'job.json',data)
     return {'job':str(out),'status':data['status'],'reference_preview':str(out/'reference/guide-review.html'),
-            'requests':[str(out/s['request']) for s in data['actions'].values()],
-            'next':'Host AI: inspect this job\'s reference motion before generating character sheets. Repair the plan if its poses are wrong.'}
+            'requests':[],
+            'next':'Host AI: inspect this job\'s reference motion before generating character sheets. Repair the plan if its poses are wrong, then submit review-reference with observations to unlock requests.'}
 
 def remove_background(image, mode):
     rgba=np.array(image.convert('RGBA'))
@@ -204,6 +259,8 @@ def align_registered(frames,tile,reference_tile,reference_origin):
 def pack(job, action, image, background='auto', columns=None, rows=None, count=None,
          seconds=None, phases=None, tile=None, height=316, hold_from=None):
     job,data=job_read(job)
+    verify_job_contract(job,data)
+    if data['schema']==2 and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
     if action not in data['actions']:raise ValueError('Action was not prepared in this job')
     spec=data['actions'][action]
     if not isinstance(action,str) or not __import__('re').fullmatch(r'[a-z][a-z0-9_-]{0,63}',action):raise ValueError('Unsafe action name')
@@ -254,12 +311,13 @@ def parser():
     p=argparse.ArgumentParser(description=__doc__)
     commands=p.add_subparsers(dest='command',required=True)
     a=commands.add_parser('prepare');a.add_argument('--character',required=True);a.add_argument('--out',required=True)
-    a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+');a.add_argument('--motion-plan')
+    a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+');a.add_argument('--motion-plan');a.add_argument('--legacy-reference-reason')
     a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True)
     a.add_argument('--background',choices=['auto','alpha','magenta'],default='auto')
     for key in ['columns','rows','count','hold-from']:a.add_argument('--'+key,type=int)
     a.add_argument('--seconds',type=float);a.add_argument('--phases',type=lambda x:[float(v) for v in x.split(',')])
     a.add_argument('--tile',type=lambda x:tuple(int(v) for v in x.lower().split('x')));a.add_argument('--height',type=int,default=316)
+    a=commands.add_parser('review-reference');a.add_argument('--job',required=True);a.add_argument('--report',required=True)
     a=commands.add_parser('review');a.add_argument('--job',required=True)
     return p
 
@@ -268,6 +326,7 @@ def main():
     try:
         if command=='prepare':result=prepare(**args)
         elif command=='pack':result=pack(**args)
+        elif command=='review-reference':result=review_reference(**args)
         else:
             job,data=job_read(args['job']);make_preview(job,data);result={'preview':str(job/'review.html')}
         print(json.dumps(result,ensure_ascii=False,indent=2))

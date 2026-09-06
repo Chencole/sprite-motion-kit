@@ -49,6 +49,14 @@ Keys start at zero, end at `seconds`, and strictly increase. A looping action ne
 
 ## Agent's authoring responsibilities
 
+### Required generation prerequisites
+
+Draft plans can still be rendered before they are complete. Character preparation additionally requires nonempty `character_analysis.anatomy`, `character_analysis.mass_and_balance` and `character_analysis.equipment` (describe the absence of equipment when appropriate). Each action needs `design.intent`, `design.support_and_contact`, `design.phases` and `design.end_state`. These are explanatory strings authored for the actual character and requested action, not generic placeholders. Preparation rejects motion with fewer than three keys or no changing joint positions.
+
+Preparation does not emit ready-to-use request files. After inspecting the reference, the agent submits `review-reference --job JOB --report REPORT.json`. The report contains `input_hashes` copied from the job and `actions` keyed by action ID. Each action records true checks for `anatomy`, `support_and_contact`, `timing`, `camera`, `end_state`, plus nonempty `notes` describing observed motion. A failed check means repair the plan and prepare again. No automatic user approval is required. This report is an accountable agent observation, not an automated certificate of natural movement.
+
+The tool checks hashes of the character, plan and every guide before accepting the report or exporting. Changed inputs invalidate the job; prepare and review a new one. Legacy jobs need an explicit reference-reuse reason; default preparation never silently chooses the bundled backward fall.
+
 Before choosing key poses, describe the character-specific motion intent in each action's `description`: apparent weight, supporting limbs, balance/centre-of-mass shift, equipment constraints and the desired end state. For a large creature's death, reason about the sequence of lost support, any bracing, the fall direction, ground contact and settling of secondary parts. For walking, reason about footfall order, stride, stance width and the return into the next step. Express those decisions through joint/root keys and timings; changing an action label alone is not a variant. Examples such as a giant's braced collapse or a nimble humanoid's lighter stride are not mandatory templates. The AI chooses a suitable motion for the request, while reusing approved motion when appropriate.
 
 1. Translate the request into named actions and descriptions, anatomy, attached objects, view and timing.

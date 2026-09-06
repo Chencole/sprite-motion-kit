@@ -23,10 +23,10 @@ class MotionTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.character=self.root/'character.png'
         Image.new('RGBA',(20,30),'blue').save(self.character)
-        self.job=self.root/'job';motion.prepare(self.character,self.job)
+        self.job=self.root/'job';motion.prepare(self.character,self.job,legacy_reference_reason='Approved side humanoid walk and fall match this test fixture')
     def test_prepare_preserves_existing_job(self):
         before=(self.job/'job.json').read_bytes()
-        with self.assertRaises(ValueError):motion.prepare(self.character,self.job)
+        with self.assertRaises(ValueError):motion.prepare(self.character,self.job,legacy_reference_reason='Approved side humanoid walk and fall match this test fixture')
         self.assertEqual(before,(self.job/'job.json').read_bytes())
     def test_alpha_and_nondivisible_grid(self):
         frames=motion.extract(sheet(4,2),4,2,8)

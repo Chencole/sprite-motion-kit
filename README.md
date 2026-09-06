@@ -71,3 +71,7 @@ python scripts/package.py
 Code, procedural renderer and workflow: **MIT** (modify, redistribute, commercial use permitted). Bundled legacy references: **CC0**, derived from Quaternius' Universal Animation Library. User character artwork and generated outputs retain their own applicable rights.
 
 This repository contains no private game code, saves, character artwork, credentials or model weights. See [privacy](docs/PRIVACY.md), [terms](docs/TERMS.md) and [official directory status](docs/OFFICIAL-SUBMISSION.md). GitHub distribution is independent of OpenAI's public directory; no official listing is claimed.
+
+## 生成前置检查
+
+默认入口必须提供角色分析、动作构思和自定义三维方案。工具先生成参考，AI 实际检查并提交记录后才解锁生成请求。替换角色图、方案或参考图会使检查失效。旧模板只可通过 `--legacy-reference-reason` 显式复用，不再作为缺省流程。检查记录不等于美术质量认证。详见插件内 motion-contract。

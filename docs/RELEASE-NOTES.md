@@ -1,3 +1,7 @@
+# 0.3.0 — Enforced authoring and reference review
+
+Default preparation now rejects missing motion plans, missing character/action reasoning and neutral scaffolds. Reference inspection reports unlock generation requests; changed inputs invalidate export. Legacy reuse requires an explicit reason. This is a breaking default change from 0.2.x. All 25 tests pass.
+
 # Release notes
 
 ## 0.2.0 — AI-authored custom motion plans

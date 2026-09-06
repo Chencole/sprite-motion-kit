@@ -32,7 +32,9 @@ Variations are authored by the AI, not randomly supplied by the renderer. Differ
 
    `python scripts/motion.py prepare --character CHARACTER.png --motion-plan PLAN.json --out JOB --name CHARACTER_NAME`
 
-   Read each generated request. Pass its custom guide first and character image second to the host image tool. Generate a coherent complete action sheet matching the poses, rather than unrelated standing images. Save the returned original in the job. The plan is a visual guide, not a guaranteed hard constraint on the image model.
+   Preparation requires `character_analysis` and each action's `design` fields from the motion contract, and rejects static scaffolds even if labeled authored. It renders references but withholds generation-request files. Inspect the actual reference playback, then save an observation report using the exact `input_hashes` from `job.json`, per-action checks and concrete notes. Run `python scripts/motion.py review-reference --job JOB --report REPORT.json` to unlock requests. This is the agent's visual inspection, not a user permission step; never fill pass flags without inspecting. A changed plan, character or guide requires a new job and review.
+
+   Read each unlocked request. Pass its custom guide first and character image second to the host image tool. Generate a coherent complete action sheet matching the poses, rather than unrelated standing images. Save the returned original in the job. The plan is a visual guide, not a guaranteed hard constraint on the image model. Tools enforce recorded prerequisites and input identity; they cannot prove the AI reasoned well or that the art looks natural.
 5. Inspect actual grid, alpha, anatomy and continuity; pack:
 
    `python scripts/motion.py pack --job JOB --action overhead_cut --image GENERATED.png`
@@ -42,7 +44,7 @@ Variations are authored by the AI, not randomly supplied by the renderer. Differ
 
 ## Reuse and compatibility
 
-- Reuse an approved reference when it actually matches the request. Bundled CC0 pure-right-profile walk and backward fall remain available through `motion.py prepare` without `--motion-plan`; that legacy mode only supports walk/death.
+- Reuse an approved reference when it actually matches the request. Bundled CC0 pure-right-profile walk and backward fall require an explicit `--legacy-reference-reason "why this approved motion fits this character"` instead of `--motion-plan`; omitting both is an error. This compatibility mode only supports walk/death. Do not use it for a request for newly conceived, character-specific motion.
 - New attacks, bodies and death directions use custom plans. Do not edit Python to add each action name or feed a human fall to a quadruped just because an old preset is convenient.
 - Loop endpoints match; the renderer omits the duplicated endpoint. One-shot actions stop at their last pose. Death keeps a full-size corpse. Blue/orange identify near/far limbs, not costume colors.
 - Technical validation does not certify natural movement. Keep one scale, inspect support and transitions, and distinguish generated poses from interpolation or duplicates.
