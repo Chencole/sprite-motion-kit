@@ -40,13 +40,18 @@ class BatchTests(unittest.TestCase):
         for i in range(8):
             x=i%4*100; y=i//4*100; d.rectangle((x+30,y+15,x+65,y+85), fill='blue')
         im.save(raw)
+        crop_path=self.root/'crop-plan.json'
+        if not crop_path.exists():
+            motion.contract_module().crop_template(raw,4,2,8,crop_path)
+            crop=motion.read(crop_path);crop.update(reviewed=True,notes='Synthetic 4x2 fixture has no gutters or margins.');motion.write(crop_path,crop)
         for a in actions:
             jd=motion.read(job/'job.json')
             report=motion.quality_module().observations_template(job,jd,a,raw,motion.mannequin_module())
             report['frames']=[{'frame':i,'points':{'a':[30,15],'b':[65,15]}} for i in range(8)]
             report['visual_checks']={k:True for k in report['visual_checks']};report['notes']='Synthetic export bookkeeping fixture only.'
+            report['crop_plan_sha256']=motion.contract_module().digest(crop_path)
             report_path=self.root/'observations.json';motion.write(report_path,report)
-            motion.pack(job,a,raw,observations=report_path)
+            motion.pack(job,a,raw,observations=report_path,crop_plan=crop_path)
         batch.attach(self.batch, 'knight', job)
         return job
 

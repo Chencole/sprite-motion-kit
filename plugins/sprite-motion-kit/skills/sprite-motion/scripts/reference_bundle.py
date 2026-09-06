@@ -80,6 +80,7 @@ def prepare(character,out,bundle,name,background_mode):
           'Transfer the reference projected positions into the same cells; do not individually fit, recenter, resize, floor-align or rearrange poses. Ground-contact feet meet the common ground, airborne feet retain reference height, and falling bodies retain root displacement. '
           'Preserve the same head, body dimensions, clothes and weapon sizes. Sword and shield stay bound to their original hands and follow the arms naturally. Every cell must keep the entire character and equipment inside padding. Blue/orange guide limbs are labels, not costume colors. Trace their changing near/far support identities across BOTH rows, not just the first row. '
           +background+' '+('Complete both opposite support phases and flow back into the first pose without a duplicate endpoint.' if s['loop'] else 'End at the full-size settled final pose and hold; no shrinking or disappearance.')+'\n')
+        spec['request_draft']+=motion.contract_module().endpoints(out,action,spec)
         job['actions'][action]=spec
     motion.write(out/'reference/bundle.json',copied);job['input_hashes']=motion.fingerprints(out,job);motion.write(out/'job.json',job)
     return {'job':str(out),'status':job['status'],'requests':[],'next':'Inspect imported reference playback and projected contacts, then review-reference to unlock whole-sheet generation requests.'}

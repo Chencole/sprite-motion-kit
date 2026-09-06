@@ -92,12 +92,19 @@ def evidence(job, character_hash, action):
     if clip.get('draft',True) or not clip.get('sequence_check',{}):
         raise ValueError('Draft or legacy export lacks per-frame pose verification')
     observation_path=dest/'pose-observations.json'
-    result=motion.quality_module().check(job,jd,action,dest/clip['source'],motion.read(observation_path),motion.mannequin_module())
+    rectangles=None;crop_path=dest/'crop-plan.json'
+    if clip.get('crop_plan_sha256'):
+        if digest(crop_path)!=clip['crop_plan_sha256'] or motion.read(observation_path).get('crop_plan_sha256')!=digest(crop_path):raise ValueError('Crop geometry changed after pose review')
+        s=jd['actions'][action];_,rectangles=motion.contract_module().load_crop(crop_path,dest/clip['source'],s['columns'],s['rows'],s['count'])
+    elif jd['actions'][action].get('endpoints'):raise ValueError('Export is missing its reviewed crop geometry')
+    result=motion.quality_module().check(job,jd,action,dest/clip['source'],motion.read(observation_path),motion.mannequin_module(),rectangles)
     if result!=clip['sequence_check']:raise ValueError('Pose verification changed; review this output again')
     if clip['action'] != action or clip.get('plan_sha256') != jd.get('plan_sha256'):
         raise ValueError('Clip does not belong to the current action/plan')
     files = [job / 'job.json', dest / 'clip.json', dest / clip['atlas'], dest / clip['source'], observation_path]
     files += [dest / f'frame-{i:03}.png' for i in range(clip['count'])]
+    if clip.get('crop_plan_sha256'):files.append(crop_path)
+    if jd['actions'][action].get('endpoint_reference'):files.append(job/jd['actions'][action]['endpoint_reference'])
     if digest(dest / clip['source']) != clip['source_sha256']:
         raise ValueError('Generated source changed')
     # job.json status changes when another action is packed; hash stable inputs instead.

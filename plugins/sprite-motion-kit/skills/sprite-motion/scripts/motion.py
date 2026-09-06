@@ -94,8 +94,9 @@ def prepare(character, out, actions=None, name='the supplied character', motion_
             selected.save(out/f'{action}-guide.png')
             spec.update(count=len(frame_indices),columns=cols,rows=rows,reference_indices=frame_indices,phases=[i/8 for i in frame_indices])
             prompt=(f'Create exactly {len(frame_indices)} full-body walk poses in {cols} columns by {rows} rows. Reference 1 is the approved pure-right-profile walking reference at phases {spec["phases"]}; reference 2 supplies character identity only. Match each distinct pose in order, preserve anatomical near/far legs, costume, weapons, fixed cell origin and scale. Opposite contacts must exchange legs and passing poses must carry the lifted knee ahead of the hip. Do not repeat the same rear-leg pose. Use transparent background or flat magenta, no labels, borders or missing limbs. This is a reduced-frame walk loop, not extra in-between images.\n')
-        (out/f'{action}-request.txt').write_text(prompt,encoding='utf-8')
         spec.update({'guide':f'{action}-guide.png','reference':f'{action}-reference.png','request':f'{action}-request.txt','status':'awaiting_generation'})
+        prompt+=contract_module().endpoints(out,action,spec)
+        (out/f'{action}-request.txt').write_text(prompt,encoding='utf-8')
         data['actions'][action]=spec
     write(out/'job.json',data)
     return {'job':str(out),'status':data['status'],'requests':[str(out/f'{a}-request.txt') for a in actions],
@@ -107,6 +108,10 @@ def mannequin_module():
 
 def quality_module():
     spec=importlib.util.spec_from_file_location('sprite_quality',Path(__file__).with_name('quality.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+def contract_module():
+    spec=importlib.util.spec_from_file_location('sprite_contract',Path(__file__).with_name('sprite_contract.py'))
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
 def phase_inputs(job,action,out):
@@ -150,9 +155,11 @@ def fingerprints(job,data):
         paths={'bundle':data['reference_bundle'],'character':data['character']}
         for a,s in data['actions'].items():
             for k in ['guide','reference','landmarks']:paths[k+':'+a]=s[k]
+            if s.get('endpoint_reference'):paths['endpoints:'+a]=s['endpoint_reference']
         return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
     paths={'plan':data['motion_plan'],'character':data['character']}
     paths.update({'guide:'+a:s['guide'] for a,s in data['actions'].items()})
+    paths.update({'endpoints:'+a:s['endpoint_reference'] for a,s in data['actions'].items() if s.get('endpoint_reference')})
     return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
 
 def verify_job_contract(job,data):
@@ -205,7 +212,8 @@ def generation_check(job,adapter):
         controls={keys[0]:w,keys[1]:h} if len(keys)==2 else {keys[0]:f'{w}x{h}'}
         if 'request_draft' not in s:raise ValueError('Prepare a new job to add generation-time controls; old unlocked requests cannot be retroactively certified')
         packets[action]={'schema':1,'action':action,'provider':provider['name'],'tool_arguments':controls,'prompt':s['request_draft'],
-          'references':[str(job/s['guide']),str(job/data['character'])],'input_hashes':data['input_hashes'],
+          'references':[str(job/s['guide']),str(job/data['character'])]+([str(job/s['endpoint_reference'])] if s.get('endpoint_reference') else []),'input_hashes':data['input_hashes'],
+          'endpoints':s.get('endpoints'),
           'canvas':[w,h],'grid':[s['columns'],s['rows']],'cell_origin':s['origin'],'cell_ground_y':s['floor_y'],
           'background_mode':data['background_mode'],'automatic_retry':False,
           'limitation':'Dedicated size controls constrain canvas only. Pose, grid contents and equipment continuity remain model outputs, not hard skeletal bindings.'}
@@ -244,7 +252,7 @@ def prepare_custom(character,out,motion_plan,actions,name):
                 'preserve jump height and falling/root displacement rather than centering or grounding each pose separately. '
                 'Use true transparent alpha, or uniform magenta only if the character does not contain magenta. No labels, grid lines, scenery or baked checkerboard. '
                 +('Complete a seamless cycle using opposite support phases; do not duplicate the first pose at the end.' if spec['loop'] else 'Play the whole action once in sequence, ending in the last intended pose; do not loop or shrink away.')+'\n')
-        spec['request_draft']=prompt;data['actions'][action]=spec
+        spec['request_draft']=prompt+contract_module().endpoints(out,action,spec);data['actions'][action]=spec
     data['input_hashes']=fingerprints(out,data)
     write(out/'job.json',data)
     return {'job':str(out),'status':data['status'],'reference_preview':str(out/'reference/guide-review.html'),
@@ -266,12 +274,12 @@ def remove_background(image, mode):
     if float((edge<=8).mean())<.98:raise ValueError('Cell background is not transparent around its perimeter; a token alpha pixel does not make a checkerboard transparent')
     return Image.fromarray(rgba)
 
-def extract(raw, columns, rows, count, background='auto'):
+def extract(raw, columns, rows, count, background='auto',rectangles=None):
     if columns<1 or rows<1 or not 1<=count<=columns*rows:raise ValueError('Invalid sheet grid')
     frames=[]
     for i in range(count):
         x,y=i%columns,i//columns
-        box=(round(x*raw.width/columns),round(y*raw.height/rows),round((x+1)*raw.width/columns),round((y+1)*raw.height/rows))
+        box=rectangles[i] if rectangles is not None else (round(x*raw.width/columns),round(y*raw.height/rows),round((x+1)*raw.width/columns),round((y+1)*raw.height/rows))
         f=remove_background(raw.crop(box),background)
         b=f.getbbox()
         if b is None:raise ValueError(f'Frame {i} is empty')
@@ -351,7 +359,7 @@ def align_canvas(frames,tile,height):
     return result,meta
 
 def pack(job, action, image, background='auto', columns=None, rows=None, count=None,
-         seconds=None, phases=None, tile=None, height=316, hold_from=None, observations=None, draft=False):
+         seconds=None, phases=None, tile=None, height=316, hold_from=None, observations=None, draft=False,crop_plan=None):
     job,data=job_read(job)
     verify_job_contract(job,data)
     if data['schema'] in [2,3] and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
@@ -376,11 +384,17 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     raw=Image.open(image)
     if data['schema']==3 and background not in ['auto',data['background_mode']]:raise ValueError('Background mode must match prepared generation contract')
     if data['schema']==3 and background=='auto':background=data['background_mode']
-    sources=extract(raw,columns,rows,count,background)
+    crop_data=None;rectangles=None
+    if crop_plan is not None:crop_data,rectangles=contract_module().load_crop(crop_plan,image,columns,rows,count,require_review=not draft)
+    sources=extract(raw,columns,rows,count,background,rectangles)
     sequence_result=None
     if not draft:
         if observations is None:raise ValueError('Per-frame pose observations required before export. Use --draft only for isolated review, never delivery.')
-        sequence_result=quality_module().check(job,data,action,image,read(observations),mannequin_module())
+        if spec.get('endpoints') and crop_plan is None:raise ValueError('New jobs require an inspected crop plan before final export; use crop-template and inspect its overlay')
+        report=read(observations)
+        if crop_data is not None and report.get('crop_plan_sha256')!=contract_module().digest(crop_plan):raise ValueError('Pose observations and export must use the identical reviewed crop plan')
+        if crop_data is None and report.get('crop_plan_sha256'):raise ValueError('Supply the same crop plan used by pose observations')
+        sequence_result=quality_module().check(job,data,action,image,report,mannequin_module(),rectangles)
         if count!=len(read(observations)['frames']):raise ValueError('Cannot change reviewed frame count')
     if spec.get('alignment')=='reference_canvas':frames,anchors=align_registered(sources,tile,spec['tile'],spec['origin'])
     else:frames,anchors=align_canvas(sources,tile,height)
@@ -408,6 +422,8 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
           'source':saved_source.name,
           'source_sha256':hashlib.sha256(Path(image).read_bytes()).hexdigest(),
           'draft':draft,'sequence_check':sequence_result}
+    if crop_plan is not None:
+        shutil.copy2(crop_plan,dest/'crop-plan.json');clip['crop_plan_sha256']=contract_module().digest(crop_plan)
     if observations is not None:
         shutil.copy2(observations,dest/'pose-observations.json')
     write(dest/'clip.json',clip)
@@ -426,12 +442,17 @@ def parser():
     a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True)
     a.add_argument('--background',choices=['auto','alpha','magenta'],default='auto')
     a.add_argument('--observations');a.add_argument('--draft',action='store_true')
+    a.add_argument('--crop-plan')
     for key in ['columns','rows','count','hold-from']:a.add_argument('--'+key,type=int)
     a.add_argument('--seconds',type=float);a.add_argument('--phases',type=lambda x:[float(v) for v in x.split(',')])
     a.add_argument('--tile',type=lambda x:tuple(int(v) for v in x.lower().split('x')));a.add_argument('--height',type=int,default=316)
     a=commands.add_parser('review-reference');a.add_argument('--job',required=True);a.add_argument('--report',required=True)
     a=commands.add_parser('generation-check');a.add_argument('--job',required=True);a.add_argument('--adapter',required=True)
     a=commands.add_parser('pose-template');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True);a.add_argument('--out',required=True)
+    a.add_argument('--crop-plan')
+    a=commands.add_parser('crop-template');a.add_argument('--image',required=True);a.add_argument('--out',required=True)
+    for k in ['columns','rows','count']:a.add_argument('--'+k,type=int,required=True)
+    a=commands.add_parser('crop-overlay');a.add_argument('--image',required=True);a.add_argument('--plan-path',required=True);a.add_argument('--out',required=True)
     a=commands.add_parser('phase-inputs');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--out',required=True)
     a=commands.add_parser('review');a.add_argument('--job',required=True)
     return p
@@ -443,10 +464,16 @@ def main():
         elif command=='pack':result=pack(**args)
         elif command=='review-reference':result=review_reference(**args)
         elif command=='generation-check':result=generation_check(**args)
+        elif command=='crop-template':result=contract_module().crop_template(**args)
+        elif command=='crop-overlay':result=contract_module().crop_overlay(**args)
         elif command=='phase-inputs':result=phase_inputs(**args)
         elif command=='pose-template':
             job,data=job_read(args['job']);verify_job_contract(job,data)
-            result=quality_module().observations_template(job,data,args['action'],args['image'],mannequin_module());write(args['out'],result)
+            result=quality_module().observations_template(job,data,args['action'],args['image'],mannequin_module())
+            if args.get('crop_plan'):
+                s=data['actions'][args['action']];contract_module().load_crop(args['crop_plan'],args['image'],s['columns'],s['rows'],s['count'])
+                result['crop_plan_sha256']=contract_module().digest(args['crop_plan'])
+            write(args['out'],result)
             result={'observations_template':str(Path(args['out']).resolve()),'status':'needs_actual_pixel_observations'}
         else:
             job,data=job_read(args['job']);make_preview(job,data);result={'preview':str(job/'review.html')}

@@ -95,6 +95,24 @@ def reference_points(job,data,action,mannequin):
         frames.append({n:[float((view@p[n])[0]),float(-(view@p[n])[1])] for n in needed})
     return frames,edges
 
+def endpoint_check(reference,observed,edges,loop):
+    names=sorted({n for edge in edges for n in edge});ratios=[]
+    for r,o in zip(reference,observed):
+        for a,b in edges:
+            length=np.linalg.norm(np.array(r[b])-r[a])
+            if length>1e-8:ratios.append(np.linalg.norm(np.array(o['points'][b])-o['points'][a])/length)
+    if not ratios:raise ValueError('Endpoint check has no measurable pose segments')
+    scale=float(np.median(ratios));start,end=(-1,0) if loop else (0,-1)
+    errors=[]
+    for n in names:
+        expected=(np.array(reference[end][n])-reference[start][n])*scale
+        actual=np.array(observed[end]['points'][n])-observed[start]['points'][n]
+        errors.append(float(np.linalg.norm(actual-expected)))
+    extent=float(np.ptp(np.array([[r[n][1] for n in names] for r in reference])))*scale
+    tolerance=max(3.,extent*.06)
+    if max(errors)>tolerance:raise ValueError('Endpoint transition differs from reference; inspect last-to-first seam or first-to-settled pose')
+    return {'transition':'last_to_first' if loop else 'first_to_settled','max_error_pixels':max(errors),'tolerance_pixels':tolerance}
+
 def observations_template(job,data,action,image,mannequin):
     ref,edges=reference_points(job,data,action,mannequin)
     return {'source_sha256':digest(image),'guide_sha256':digest(job/data['actions'][action]['guide']),
@@ -102,7 +120,7 @@ def observations_template(job,data,action,image,mannequin):
       'frames':[{'frame':i,'points':{n:None for n in r}} for i,r in enumerate(ref)],
       'visual_checks':{k:False for k in ['landmarks_match_pixels','identity_and_equipment','support_and_weight','loop_or_settling','camera']},'notes':''}
 
-def check(job,data,action,image,report,mannequin):
+def check(job,data,action,image,report,mannequin,rectangles=None):
     if report.get('action')!=action or report.get('source_sha256')!=digest(image) or report.get('guide_sha256')!=digest(job/data['actions'][action]['guide']):
         raise ValueError('Pose observations must match the exact action, generated image and current guide')
     for k in ['landmarks_match_pixels','identity_and_equipment','support_and_weight','loop_or_settling','camera']:
@@ -110,6 +128,7 @@ def check(job,data,action,image,report,mannequin):
     if not str(report.get('notes','')).strip():raise ValueError('Concrete visual observations required')
     ref,edges=reference_points(job,data,action,mannequin)
     result=compare(ref,report.get('frames',[]),edges)
+    result['endpoints']=endpoint_check(ref,report['frames'],edges,data['actions'][action]['loop'])
     # Catch copied guide coordinates, off-canvas marks and marks in empty space.
     # This still does not identify which bone a foreground pixel belongs to.
     pixels=np.array(Image.open(image).convert('RGBA'));rgb=pixels[:,:,:3].astype(int)
@@ -118,6 +137,7 @@ def check(job,data,action,image,report,mannequin):
     for i,frame in enumerate(report['frames']):
         x0=round(i%spec['columns']*w/spec['columns']);x1=round((i%spec['columns']+1)*w/spec['columns'])
         y0=round(i//spec['columns']*h/spec['rows']);y1=round((i//spec['columns']+1)*h/spec['rows'])
+        if rectangles is not None:x0,y0,x1,y1=rectangles[i]
         cell=solid[y0:y1,x0:x1];radius=max(2,round(min(cell.shape)*.012))
         for name,(x,y) in frame['points'].items():
             if not 0<=x<cell.shape[1] or not 0<=y<cell.shape[0]:raise ValueError(f'Frame {i+1}: landmark {name} lies outside generated cell')
