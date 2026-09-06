@@ -59,13 +59,16 @@ def request_text(action, character_name):
         'Preserve distinctive anatomy and equipment; keep all limbs and any dropped weapon inside each cell. '
         'Final frames settle into the same corpse, which stays still. This action plays once and does not loop.\n')
 
-def prepare(character, out, actions=None, name='the supplied character', motion_plan=None, legacy_reference_reason=None):
+def prepare(character, out, actions=None, name='the supplied character', motion_plan=None, legacy_reference_reason=None, frame_indices=None):
     if motion_plan is not None:
+        if frame_indices is not None:raise ValueError('Set frame_count in the custom plan instead')
         if legacy_reference_reason is not None:raise ValueError('Choose a custom plan or explicit legacy reuse, not both')
         return prepare_custom(character,out,motion_plan,actions,name)
     require_text(legacy_reference_reason,'A custom motion plan is required. Legacy reuse requires --legacy-reference-reason explaining why the approved reference fits this character.')
     actions=actions or tuple(PRESETS)
     if not actions or any(a not in PRESETS for a in actions):raise ValueError('Choose walk and/or death')
+    if frame_indices is not None and (list(actions)!=['walk'] or len(frame_indices)<4 or frame_indices[0]!=0 or any(not isinstance(i,int) or not 0<=i<8 for i in frame_indices) or any(a>=b for a,b in zip(frame_indices,frame_indices[1:]))):
+        raise ValueError('Explicit walk phases must increase from zero, with at least four indices in 0..7')
     character=Path(character).resolve()
     if not character.is_file():raise ValueError('Character image does not exist')
     Image.open(character).verify()
@@ -79,6 +82,13 @@ def prepare(character, out, actions=None, name='the supplied character', motion_
         shutil.copy2(SKILL/f'assets/{action}-guide.png',out/f'{action}-guide.png')
         shutil.copy2(SKILL/f'assets/{action}-reference.png',out/f'{action}-reference.png')
         prompt=request_text(action,name)
+        if frame_indices is not None:
+            guide=Image.open(out/f'{action}-guide.png');w,h=guide.width//4,guide.height//2
+            cols=4;rows=math.ceil(len(frame_indices)/cols);selected=Image.new('RGBA',(w*cols,h*rows))
+            for i,n in enumerate(frame_indices):selected.alpha_composite(guide.convert('RGBA').crop((n%4*w,n//4*h,n%4*w+w,n//4*h+h)),(i%cols*w,i//cols*h))
+            selected.save(out/f'{action}-guide.png')
+            spec.update(count=len(frame_indices),columns=cols,rows=rows,reference_indices=frame_indices,phases=[i/8 for i in frame_indices])
+            prompt=(f'Create exactly {len(frame_indices)} full-body walk poses in {cols} columns by {rows} rows. Reference 1 is the approved pure-right-profile walking reference at phases {spec["phases"]}; reference 2 supplies character identity only. Match each distinct pose in order, preserve anatomical near/far legs, costume, weapons, fixed cell origin and scale. Opposite contacts must exchange legs and passing poses must carry the lifted knee ahead of the hip. Do not repeat the same rear-leg pose. Use transparent background or flat magenta, no labels, borders or missing limbs. This is a reduced-frame walk loop, not extra in-between images.\n')
         (out/f'{action}-request.txt').write_text(prompt,encoding='utf-8')
         spec.update({'guide':f'{action}-guide.png','reference':f'{action}-reference.png','request':f'{action}-request.txt','status':'awaiting_generation'})
         data['actions'][action]=spec
@@ -90,6 +100,27 @@ def mannequin_module():
     spec=importlib.util.spec_from_file_location('sprite_mannequin',Path(__file__).with_name('mannequin.py'))
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
 
+def quality_module():
+    spec=importlib.util.spec_from_file_location('sprite_quality',Path(__file__).with_name('quality.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+def phase_inputs(job,action,out):
+    job,data=job_read(job);verify_job_contract(job,data)
+    spec=data['actions'][action]
+    if data['schema']==2 and not data.get('reference_review'):raise ValueError('Review the whole reference before splitting phases')
+    out=Path(out).resolve()
+    if out.exists():raise ValueError('Use a new phase-input directory')
+    out.mkdir(parents=True);guide=Image.open(job/spec['guide']);entries=[]
+    for i in range(spec['count']):
+        col,row=i%spec['columns'],i//spec['columns']
+        box=(round(col*guide.width/spec['columns']),round(row*guide.height/spec['rows']),round((col+1)*guide.width/spec['columns']),round((row+1)*guide.height/spec['rows']))
+        path=out/f'pose-{i:03}.png';guide.crop(box).save(path)
+        entries.append({'frame':i,'reference':str(path),'reference_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
+          'character':str(job/data['character']),'phase':spec.get('phases',[n/spec['count'] for n in range(spec['count'])])[i],
+          'requirement':'Transfer this exact whole-body pose to the same character. A single pose image, not a new cycle. Keep fixed canvas, scale, anatomical identities and camera. Include original character plus accepted neighboring frame when available; never propagate a rejected neighbor.'})
+    write(out/'phases.json',{'action':action,'guide_sha256':hashlib.sha256((job/spec['guide']).read_bytes()).hexdigest(),'count':spec['count'],'frames':entries})
+    return {'phase_inputs':str(out/'phases.json'),'status':'references_only','next':'Host generates each indexed pose, assembles without changing order, then observes and checks complete sequence. Splitting alone is not approval.'}
+
 def require_text(value,label):
     if not isinstance(value,str) or not value.strip() or value.strip().lower() in ['todo','tbd','none','ai:']:
         raise ValueError(label)
@@ -99,6 +130,8 @@ def validate_design(plan):
     for field in ['anatomy','mass_and_balance','equipment']:
         require_text(analysis.get(field),'Missing character_analysis.'+field)
     mannequin=mannequin_module()
+    issues=quality_module().reference_issues(plan,mannequin)
+    if issues:raise ValueError('Reference motion rejected: '+'; '.join(issues))
     for name,action in plan['actions'].items():
         design=action.get('design',{})
         for field in ['intent','support_and_contact','phases','end_state']:
@@ -256,8 +289,22 @@ def align_registered(frames,tile,reference_tile,reference_origin):
         anchors.append({'translation':offset,'scale':fit,'origin':[round(reference_origin[k]*fit+offset[k]) for k in range(2)],'bounds':canvas.getbbox()})
     return result,anchors
 
+def align_canvas(frames,tile,height):
+    """One union-bound transform: never individually recenter or ground poses."""
+    bounds=[f.getbbox() for f in frames]
+    left=min(b[0] for b in bounds);top=min(b[1] for b in bounds)
+    right=max(b[2] for b in bounds);bottom=max(b[3] for b in bounds)
+    scale=height/(bottom-top);tx=round(tile[0]/2-(left+right)/2*scale);ty=round(tile[1]-24-bottom*scale)
+    result=[];meta=[]
+    for i,f in enumerate(frames):
+        target=f.resize((round(f.width*scale),round(f.height*scale)),Image.Resampling.NEAREST);b=target.getbbox()
+        if min(tx+b[0],ty+b[1])<0 or tx+b[2]>tile[0] or ty+b[3]>tile[1]:raise ValueError('Fixed canvas clips a pose; increase tile')
+        canvas=Image.new('RGBA',tile);canvas.alpha_composite(target,(tx,ty));result.append(canvas)
+        meta.append({'translation':[tx,ty],'scale':scale,'origin':[tile[0]//2,tile[1]-24],'bounds':canvas.getbbox()})
+    return result,meta
+
 def pack(job, action, image, background='auto', columns=None, rows=None, count=None,
-         seconds=None, phases=None, tile=None, height=316, hold_from=None):
+         seconds=None, phases=None, tile=None, height=316, hold_from=None, observations=None, draft=False):
     job,data=job_read(job)
     verify_job_contract(job,data)
     if data['schema']==2 and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
@@ -271,13 +318,18 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     if columns<1 or rows<1 or not 1<=count<=columns*rows:raise ValueError('Invalid sheet grid')
     seconds=seconds if seconds is not None else spec['seconds']
     if not math.isfinite(seconds) or seconds<=0:raise ValueError('Duration must be positive and finite')
-    phases=phases if phases is not None else [i/count for i in range(count)]
+    phases=phases if phases is not None else spec.get('phases',[i/count for i in range(count)])
     if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>=1 for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
         raise ValueError('Phases must match frame count and strictly increase from zero to below one')
     raw=Image.open(image)
     sources=extract(raw,columns,rows,count,background)
+    sequence_result=None
+    if not draft:
+        if observations is None:raise ValueError('Per-frame pose observations required before export. Use --draft only for isolated review, never delivery.')
+        sequence_result=quality_module().check(job,data,action,image,read(observations),mannequin_module())
+        if count!=len(read(observations)['frames']):raise ValueError('Cannot change reviewed frame count')
     if spec.get('alignment')=='reference_canvas':frames,anchors=align_registered(sources,tile,spec['tile'],spec['origin'])
-    else:frames,anchors=align(sources,action,tile,height)
+    else:frames,anchors=align_canvas(sources,tile,height)
     if hold_from is not None:
         if spec['loop'] or not 0<=hold_from<count:raise ValueError('--hold-from requires a valid zero-based pose in a non-looping action')
         for i in range(hold_from+1,count):
@@ -300,7 +352,10 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
           'hold_from':hold_from,'visual_review_passed':False,
           'alignment':spec.get('alignment','legacy_ground_registration'),'plan_sha256':data.get('plan_sha256'),
           'source':saved_source.name,
-          'source_sha256':hashlib.sha256(Path(image).read_bytes()).hexdigest()}
+          'source_sha256':hashlib.sha256(Path(image).read_bytes()).hexdigest(),
+          'draft':draft,'sequence_check':sequence_result}
+    if observations is not None:
+        shutil.copy2(observations,dest/'pose-observations.json')
     write(dest/'clip.json',clip)
     spec['status']='packed';data['status']='awaiting_visual_review';write(job/'job.json',data)
     make_preview(job,data)
@@ -312,12 +367,16 @@ def parser():
     commands=p.add_subparsers(dest='command',required=True)
     a=commands.add_parser('prepare');a.add_argument('--character',required=True);a.add_argument('--out',required=True)
     a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+');a.add_argument('--motion-plan');a.add_argument('--legacy-reference-reason')
+    a.add_argument('--frame-indices',nargs='+',type=int)
     a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True)
     a.add_argument('--background',choices=['auto','alpha','magenta'],default='auto')
+    a.add_argument('--observations');a.add_argument('--draft',action='store_true')
     for key in ['columns','rows','count','hold-from']:a.add_argument('--'+key,type=int)
     a.add_argument('--seconds',type=float);a.add_argument('--phases',type=lambda x:[float(v) for v in x.split(',')])
     a.add_argument('--tile',type=lambda x:tuple(int(v) for v in x.lower().split('x')));a.add_argument('--height',type=int,default=316)
     a=commands.add_parser('review-reference');a.add_argument('--job',required=True);a.add_argument('--report',required=True)
+    a=commands.add_parser('pose-template');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True);a.add_argument('--out',required=True)
+    a=commands.add_parser('phase-inputs');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--out',required=True)
     a=commands.add_parser('review');a.add_argument('--job',required=True)
     return p
 
@@ -327,6 +386,11 @@ def main():
         if command=='prepare':result=prepare(**args)
         elif command=='pack':result=pack(**args)
         elif command=='review-reference':result=review_reference(**args)
+        elif command=='phase-inputs':result=phase_inputs(**args)
+        elif command=='pose-template':
+            job,data=job_read(args['job']);verify_job_contract(job,data)
+            result=quality_module().observations_template(job,data,args['action'],args['image'],mannequin_module());write(args['out'],result)
+            result={'observations_template':str(Path(args['out']).resolve()),'status':'needs_actual_pixel_observations'}
         else:
             job,data=job_read(args['job']);make_preview(job,data);result={'preview':str(job/'review.html')}
         print(json.dumps(result,ensure_ascii=False,indent=2))

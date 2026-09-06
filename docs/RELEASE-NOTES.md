@@ -1,3 +1,11 @@
+# 0.5.0 — Pose correspondence gates and fixed-canvas export
+
+Final packing requires observed per-frame landmarks tied to the exact source image and reference. Limb directions are compared without reordering or swapping anatomical sides; off-canvas/background landmarks are rejected. Normal humanoid walking references with perpetually folded knees are rejected before generation. Diagnostic `--draft` exports cannot pass batch completion. Legacy exports now use one transform for all frames, preserving relative position instead of per-frame recentering.
+
+Added indexed single-pose reference export and explicit reduced-frame sampling of the approved walk reference. This supports repairing a failed whole-sheet generation one phase at a time. It does not guarantee that an image model will obey the reference.
+
+44 regression tests pass. Tests establish failure gates and export behavior, not production art quality. The current game trial still has pose/identity inconsistencies and remains rejected; no game assets are included or certified by this plugin release. Landmark identity is supplied by the inspecting host and requires truthful visual observation; this is not an automatic pixel pose detector.
+
 # 0.4.0 — Requested-set coverage and completion gate
 
 Added arbitrary per-character required-action manifests, partial-job registration, current exported-art review and a failing completion command when any requested action is missing. Replaced artifacts invalidate visual review. A finished death clip no longer suffices for a walk/run/attack/death batch. Requirements are separate from individual motion plans and cannot silently shrink. All 32 tests pass. These checks verify recorded coverage and artifact identity, not aesthetic quality or the accuracy of the host's interpretation of a request.

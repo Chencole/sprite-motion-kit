@@ -38,6 +38,14 @@ The agent:
 
 See the [batch coverage contract](plugins/sprite-motion-kit/skills/sprite-motion/references/batch-coverage.md) for the required manifest and completion commands. Action IDs are user-defined. Scope is recorded before individual jobs so a partial repair cannot silently replace a full animation-set request.
 
+### Pose correspondence and rejected drafts
+
+Normal humanoid walk references with permanently folded knees are rejected before image generation. Final sprite export now requires per-frame observed landmarks matching the exact source image and guide. Directed limb angles are compared in fixed anatomical order, so repeating a trailing-leg pose cannot substitute for the passing/forward-extension phase. `pose-template` creates the observation form; the host must inspect pixels and must not copy guide coordinates into it.
+
+`pack --draft` remains available to inspect a failed generation. Drafts and older exports without correspondence evidence cannot complete a batch. All frames share one export transform; row-specific grounding and per-frame recentering are no longer used in the default legacy export path. A changed source or guide invalidates its evidence.
+
+These are rejection checks, **not a perfect-animation guarantee**. Joint annotations are supplied by the inspecting AI; this plugin does not contain a pixel pose detector. Incorrect or invented annotations can invalidate the conclusion. Normal-speed playback, identity/weapon consistency, uncertain occlusions and user-requested approval remain required. First validate one sample; do not expand a rejected pipeline across the user's roster.
+
 The default custom-plan scaffold contains neutral keys and is marked `needs_motion_design`. The AI must author the requested action. Familiar sample motions are explicitly opt-in examples; they are not a closed action menu or a claim of finished animation quality.
 
 ## Agent / contributor commands

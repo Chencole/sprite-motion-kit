@@ -75,9 +75,14 @@ def evidence(job, character_hash, action):
         raise ValueError('Action has not been packed')
     dest = job / action
     clip = motion.read(dest / 'clip.json')
+    if clip.get('draft',True) or not clip.get('sequence_check',{}):
+        raise ValueError('Draft or legacy export lacks per-frame pose verification')
+    observation_path=dest/'pose-observations.json'
+    result=motion.quality_module().check(job,jd,action,dest/clip['source'],motion.read(observation_path),motion.mannequin_module())
+    if result!=clip['sequence_check']:raise ValueError('Pose verification changed; review this output again')
     if clip['action'] != action or clip.get('plan_sha256') != jd.get('plan_sha256'):
         raise ValueError('Clip does not belong to the current action/plan')
-    files = [job / 'job.json', dest / 'clip.json', dest / clip['atlas'], dest / clip['source']]
+    files = [job / 'job.json', dest / 'clip.json', dest / clip['atlas'], dest / clip['source'], observation_path]
     files += [dest / f'frame-{i:03}.png' for i in range(clip['count'])]
     if digest(dest / clip['source']) != clip['source_sha256']:
         raise ValueError('Generated source changed')

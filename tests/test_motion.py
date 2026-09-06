@@ -18,6 +18,9 @@ def sheet(cols,rows,death=False,magenta=False):
         d.rectangle(box,fill=(80+n*3,140,210,255))
     return im
 
+# These tests isolate packing mechanics; final acceptance is tested separately.
+def draft_pack(*args,**kwargs):return motion.pack(*args,**kwargs,draft=True)
+
 class MotionTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
@@ -52,7 +55,7 @@ class MotionTests(unittest.TestCase):
     def test_full_job_and_settled_corpse(self):
         for action,rows in [('walk',2),('death',3)]:
             source=self.root/f'{action}.png';sheet(4,rows,death=action=='death').save(source)
-            motion.pack(self.job,action,source,hold_from=8 if action=='death' else None)
+            draft_pack(self.job,action,source,hold_from=8 if action=='death' else None)
         clip=motion.read(self.job/'death/clip.json')
         self.assertFalse(clip['loop']);self.assertFalse(clip['visual_review_passed'])
         self.assertEqual((self.job/'death/frame-008.png').read_bytes(),(self.job/'death/frame-011.png').read_bytes())
@@ -63,12 +66,12 @@ class MotionTests(unittest.TestCase):
     def test_invalid_grid_timing_and_hold(self):
         path=self.root/'walk.png';sheet(4,2).save(path)
         for kwargs in [{'count':0},{'columns':0},{'seconds':0},{'seconds':float('nan')},{'phases':[0]*8},{'hold_from':1}]:
-            with self.subTest(kwargs=kwargs),self.assertRaises(ValueError):motion.pack(self.job,'walk',path,**kwargs)
+            with self.subTest(kwargs=kwargs),self.assertRaises(ValueError):draft_pack(self.job,'walk',path,**kwargs)
     def test_loop_custom_phases_and_source_repack(self):
         path=self.root/'walk.png';sheet(4,2).save(path)
         phases=[0,.125,.25,.375,.5,.625,.75,.95]
-        motion.pack(self.job,'walk',path,phases=phases)
+        draft_pack(self.job,'walk',path,phases=phases)
         clip=motion.read(self.job/'walk/clip.json');self.assertEqual(clip['phases'],phases)
-        motion.pack(self.job,'walk',self.job/'walk/generated-source.png')
+        draft_pack(self.job,'walk',self.job/'walk/generated-source.png')
 
 if __name__=='__main__':unittest.main()

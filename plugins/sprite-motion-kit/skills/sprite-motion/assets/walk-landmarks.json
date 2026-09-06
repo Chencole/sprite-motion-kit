@@ -1,0 +1,303 @@
+{
+  "provenance": "Manually observed centers on the bundled Quaternius eight-pose guide. Cell-local pixels, x right/y down. Blue=near; orange=far. Approximate landmarks, 32-degree tolerance; not a pose-estimation model.",
+  "edges": [
+    [
+      "near_hip",
+      "near_knee"
+    ],
+    [
+      "near_knee",
+      "near_ankle"
+    ],
+    [
+      "near_ankle",
+      "near_toe"
+    ],
+    [
+      "far_hip",
+      "far_knee"
+    ],
+    [
+      "far_knee",
+      "far_ankle"
+    ],
+    [
+      "far_ankle",
+      "far_toe"
+    ]
+  ],
+  "frames": [
+    {
+      "near_hip": [
+        215,
+        270
+      ],
+      "near_knee": [
+        170,
+        352
+      ],
+      "near_ankle": [
+        112,
+        438
+      ],
+      "near_toe": [
+        148,
+        463
+      ],
+      "far_hip": [
+        205,
+        269
+      ],
+      "far_knee": [
+        238,
+        350
+      ],
+      "far_ankle": [
+        251,
+        447
+      ],
+      "far_toe": [
+        301,
+        442
+      ]
+    },
+    {
+      "near_hip": [
+        215,
+        264
+      ],
+      "near_knee": [
+        179,
+        354
+      ],
+      "near_ankle": [
+        145,
+        403
+      ],
+      "near_toe": [
+        181,
+        443
+      ],
+      "far_hip": [
+        205,
+        264
+      ],
+      "far_knee": [
+        217,
+        359
+      ],
+      "far_ankle": [
+        238,
+        456
+      ],
+      "far_toe": [
+        278,
+        459
+      ]
+    },
+    {
+      "near_hip": [
+        208,
+        263
+      ],
+      "near_knee": [
+        250,
+        325
+      ],
+      "near_ankle": [
+        216,
+        376
+      ],
+      "near_toe": [
+        227,
+        428
+      ],
+      "far_hip": [
+        204,
+        272
+      ],
+      "far_knee": [
+        197,
+        367
+      ],
+      "far_ankle": [
+        180,
+        448
+      ],
+      "far_toe": [
+        214,
+        461
+      ]
+    },
+    {
+      "near_hip": [
+        205,
+        264
+      ],
+      "near_knee": [
+        265,
+        335
+      ],
+      "near_ankle": [
+        242,
+        389
+      ],
+      "near_toe": [
+        281,
+        439
+      ],
+      "far_hip": [
+        199,
+        277
+      ],
+      "far_knee": [
+        214,
+        360
+      ],
+      "far_ankle": [
+        206,
+        430
+      ],
+      "far_toe": [
+        240,
+        457
+      ]
+    },
+    {
+      "near_hip": [
+        218,
+        255
+      ],
+      "near_knee": [
+        255,
+        350
+      ],
+      "near_ankle": [
+        260,
+        442
+      ],
+      "near_toe": [
+        311,
+        438
+      ],
+      "far_hip": [
+        205,
+        272
+      ],
+      "far_knee": [
+        179,
+        349
+      ],
+      "far_ankle": [
+        143,
+        418
+      ],
+      "far_toe": [
+        171,
+        456
+      ]
+    },
+    {
+      "near_hip": [
+        210,
+        267
+      ],
+      "near_knee": [
+        242,
+        359
+      ],
+      "near_ankle": [
+        248,
+        457
+      ],
+      "near_toe": [
+        288,
+        461
+      ],
+      "far_hip": [
+        201,
+        276
+      ],
+      "far_knee": [
+        155,
+        366
+      ],
+      "far_ankle": [
+        124,
+        404
+      ],
+      "far_toe": [
+        151,
+        441
+      ]
+    },
+    {
+      "near_hip": [
+        213,
+        265
+      ],
+      "near_knee": [
+        198,
+        357
+      ],
+      "near_ankle": [
+        190,
+        452
+      ],
+      "near_toe": [
+        230,
+        462
+      ],
+      "far_hip": [
+        203,
+        277
+      ],
+      "far_knee": [
+        240,
+        340
+      ],
+      "far_ankle": [
+        183,
+        364
+      ],
+      "far_toe": [
+        166,
+        413
+      ]
+    },
+    {
+      "near_hip": [
+        215,
+        267
+      ],
+      "near_knee": [
+        176,
+        358
+      ],
+      "near_ankle": [
+        134,
+        431
+      ],
+      "near_toe": [
+        173,
+        460
+      ],
+      "far_hip": [
+        208,
+        280
+      ],
+      "far_knee": [
+        259,
+        335
+      ],
+      "far_ankle": [
+        236,
+        414
+      ],
+      "far_toe": [
+        275,
+        439
+      ]
+    }
+  ]
+}

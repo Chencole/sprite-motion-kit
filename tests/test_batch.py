@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from PIL import Image, ImageDraw
 
 SCRIPTS = Path(__file__).resolve().parents[1] / 'plugins/sprite-motion-kit/skills/sprite-motion/scripts'
@@ -15,6 +16,10 @@ import motion
 class BatchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        # Bookkeeping fixtures use synthetic observations; pose accuracy is tested in test_pose_quality.
+        q=motion.quality_module()
+        q.reference_points=lambda *args: ([{'a':[0,0],'b':[1,0]} for _ in range(8)],[['a','b']])
+        patcher=patch.object(motion,'quality_module',return_value=q);patcher.start();self.addCleanup(patcher.stop)
         self.root = Path(self.temp.name)
         self.character = self.root / 'character.png'
         Image.new('RGBA', (24,40), 'blue').save(self.character)
@@ -35,7 +40,13 @@ class BatchTests(unittest.TestCase):
         for i in range(8):
             x=i%4*100; y=i//4*100; d.rectangle((x+30,y+15,x+65,y+85), fill='blue')
         im.save(raw)
-        for a in actions: motion.pack(job, a, raw)
+        for a in actions:
+            jd=motion.read(job/'job.json')
+            report=motion.quality_module().observations_template(job,jd,a,raw,motion.mannequin_module())
+            report['frames']=[{'frame':i,'points':{'a':[30,15],'b':[65,15]}} for i in range(8)]
+            report['visual_checks']={k:True for k in report['visual_checks']};report['notes']='Synthetic export bookkeeping fixture only.'
+            report_path=self.root/'observations.json';motion.write(report_path,report)
+            motion.pack(job,a,raw,observations=report_path)
         batch.attach(self.batch, 'knight', job)
         return job
 
@@ -52,6 +63,14 @@ class BatchTests(unittest.TestCase):
         state=batch.status(self.batch)
         self.assertEqual(state['reviewed'],1); self.assertEqual(state['required'],5)
         with self.assertRaisesRegex(ValueError,'run: missing_job'): batch.finish(self.batch)
+
+    def test_draft_cannot_be_accepted_as_completed_art(self):
+        job=self.job(['walk'])
+        clip=motion.read(job/'walk/clip.json');clip['draft']=True;motion.write(job/'walk/clip.json',clip)
+        item=next(e for e in batch.status(self.batch)['actions'] if e['action']=='walk')
+        self.assertEqual(item['state'],'incomplete')
+        report=self.root/'invalid-approval.json';motion.write(report,{'artifact_hashes':{}})
+        with self.assertRaisesRegex(ValueError,'Draft'):batch.review(self.batch,'knight','walk',report)
 
     def test_all_packed_still_requires_visual_review(self):
         self.job(['walk','run','thrust','overhead_cut','death'])

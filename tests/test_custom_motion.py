@@ -37,6 +37,9 @@ def custom_plan():
     for name,a in p['actions'].items():a['design']={'intent':a['description'],'support_and_contact':'Feet support body; hop has an airborne phase','phases':'Anticipation, active action, then recovery','end_state':'Stable upright pose after recovery'}
     return p
 
+# These tests isolate packing mechanics; final acceptance is tested separately.
+def draft_pack(*args,**kwargs):return motion.pack(*args,**kwargs,draft=True)
+
 class CustomMotionTests(unittest.TestCase):
     def test_arbitrary_actions_are_not_preset_dispatch(self):
         p=custom_plan();self.assertEqual(m.validate(p)['actions'],['overhead_cut','lunge','hop'])
@@ -121,7 +124,7 @@ class CustomMotionTests(unittest.TestCase):
             plan=d/'plan.json';m.write(plan,p);job=d/'job'
             result=motion.prepare(character,job,motion_plan=plan)
             self.assertEqual(result['requests'],[]);self.assertFalse((job/'hop-request.txt').exists())
-            with self.assertRaisesRegex(ValueError,'not been reviewed'):motion.pack(job,'hop',job/'reference/hop-guide.png')
+            with self.assertRaisesRegex(ValueError,'not been reviewed'):draft_pack(job,'hop',job/'reference/hop-guide.png')
             data=m.read(job/'job.json');report={'input_hashes':data['input_hashes'],'actions':{'hop':{k:True for k in ['anatomy','support_and_contact','timing','camera','end_state']}}}
             report['actions']['hop']['notes']='Engineering fixture: body rises above floor and returns upright.'
             rp=d/'review.json';m.write(rp,report);motion.review_reference(job,rp)
@@ -129,7 +132,7 @@ class CustomMotionTests(unittest.TestCase):
             self.assertIn('Human mass',(job/'hop-request.txt').read_text())
             for target in ['character.png','reference/motion-plan.json','reference/hop-guide.png']:
                 file=job/target;original=file.read_bytes();file.write_bytes(original+b' ')
-                with self.assertRaises(ValueError):motion.pack(job,'hop',job/'reference/hop-guide.png')
+                with self.assertRaises(ValueError):draft_pack(job,'hop',job/'reference/hop-guide.png')
                 file.write_bytes(original)
 
     def test_custom_render_and_pack_roundtrip(self):
@@ -141,7 +144,7 @@ class CustomMotionTests(unittest.TestCase):
             Image.new('RGBA',(20,30),'blue').save(job/'character.png')
             data={'schema':2,'character':'character.png','motion_plan':'reference/motion-plan.json','actions':{'hop':a},'plan_sha256':guide['plan_sha256'],'reference_review':{'engineering_fixture':True}}
             data['input_hashes']=motion.fingerprints(job,data);m.write(job/'job.json',data)
-            motion.pack(job,'hop',job/'reference/hop-guide.png')
+            draft_pack(job,'hop',job/'reference/hop-guide.png')
             clip=m.read(job/'hop/clip.json');self.assertEqual(clip['alignment'],'reference_canvas');self.assertFalse(clip['loop'])
             self.assertEqual(clip['plan_sha256'],guide['plan_sha256'])
             self.assertGreater(clip['frames'][0]['bounds'][1]-clip['frames'][5]['bounds'][1],15)
