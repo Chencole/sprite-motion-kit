@@ -83,7 +83,7 @@ def evidence(job, character_hash, action):
     motion.verify_job_contract(job, jd)
     if digest(job / jd['character']) != character_hash:
         raise ValueError('Character image changed')
-    if jd['schema'] == 2 and not jd.get('reference_review'):
+    if jd['schema'] in [2,3] and not jd.get('reference_review'):
         raise ValueError('Reference is not reviewed')
     if jd['actions'].get(action, {}).get('status') != 'packed':
         raise ValueError('Action has not been packed')
@@ -104,6 +104,9 @@ def evidence(job, character_hash, action):
     files = files[1:] + [job / jd['character']]
     if jd['schema'] == 2:
         files += [job / jd['motion_plan'], job / jd['actions'][action]['guide']]
+    elif jd['schema'] == 3:
+        files += [job / jd['reference_bundle']]
+        files += [job / jd['actions'][action][k] for k in ['guide','reference','landmarks']]
     return {str(p.relative_to(job)): digest(p) for p in files}
 
 

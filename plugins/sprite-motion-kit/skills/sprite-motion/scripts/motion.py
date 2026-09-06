@@ -32,7 +32,7 @@ def write(path, value):
 def job_read(job):
     job=Path(job).resolve()
     data=read(job/'job.json')
-    if data.get('schema') not in [1,2]: raise ValueError('Unsupported job schema')
+    if data.get('schema') not in [1,2,3]: raise ValueError('Unsupported job schema')
     return job,data
 
 def request_text(action, character_name):
@@ -59,7 +59,12 @@ def request_text(action, character_name):
         'Preserve distinctive anatomy and equipment; keep all limbs and any dropped weapon inside each cell. '
         'Final frames settle into the same corpse, which stays still. This action plays once and does not loop.\n')
 
-def prepare(character, out, actions=None, name='the supplied character', motion_plan=None, legacy_reference_reason=None, frame_indices=None):
+def prepare(character, out, actions=None, name='the supplied character', motion_plan=None, legacy_reference_reason=None, frame_indices=None, reference_bundle=None, background_mode=None):
+    if reference_bundle is not None:
+        if any(v is not None for v in [motion_plan,legacy_reference_reason,frame_indices,actions]):raise ValueError('Reference bundle defines its own actions, timing and rig; do not combine preparation modes')
+        import reference_bundle as bundle_module
+        return bundle_module.prepare(character,out,reference_bundle,name,background_mode or 'magenta')
+    if background_mode is not None:raise ValueError('Explicit background-mode currently requires reference-bundle; other job modes select background at pack')
     if motion_plan is not None:
         if frame_indices is not None:raise ValueError('Set frame_count in the custom plan instead')
         if legacy_reference_reason is not None:raise ValueError('Choose a custom plan or explicit legacy reuse, not both')
@@ -107,7 +112,7 @@ def quality_module():
 def phase_inputs(job,action,out):
     job,data=job_read(job);verify_job_contract(job,data)
     spec=data['actions'][action]
-    if data['schema']==2 and not data.get('reference_review'):raise ValueError('Review the whole reference before splitting phases')
+    if data['schema'] in [2,3] and not data.get('reference_review'):raise ValueError('Review the whole reference before splitting phases')
     out=Path(out).resolve()
     if out.exists():raise ValueError('Use a new phase-input directory')
     out.mkdir(parents=True);guide=Image.open(job/spec['guide']);entries=[]
@@ -119,7 +124,7 @@ def phase_inputs(job,action,out):
           'character':str(job/data['character']),'phase':spec.get('phases',[n/spec['count'] for n in range(spec['count'])])[i],
           'requirement':'Transfer this exact whole-body pose to the same character. A single pose image, not a new cycle. Keep fixed canvas, scale, anatomical identities and camera. Include original character plus accepted neighboring frame when available; never propagate a rejected neighbor.'})
     write(out/'phases.json',{'action':action,'guide_sha256':hashlib.sha256((job/spec['guide']).read_bytes()).hexdigest(),'count':spec['count'],'frames':entries})
-    return {'phase_inputs':str(out/'phases.json'),'status':'references_only','next':'Host generates each indexed pose, assembles without changing order, then observes and checks complete sequence. Splitting alone is not approval.'}
+    return {'phase_inputs':str(out/'phases.json'),'status':'references_only','next':'These cells support inspection of the whole-sheet sequence. Generate one complete action sheet with the complete guide; do not independently generate these cells. Splitting alone is not approval.'}
 
 def require_text(value,label):
     if not isinstance(value,str) or not value.strip() or value.strip().lower() in ['todo','tbd','none','ai:']:
@@ -141,6 +146,11 @@ def validate_design(plan):
             raise ValueError(name+': neutral scaffold is not an authored motion; provide changing whole-body keys')
 
 def fingerprints(job,data):
+    if data['schema']==3:
+        paths={'bundle':data['reference_bundle'],'character':data['character']}
+        for a,s in data['actions'].items():
+            for k in ['guide','reference','landmarks']:paths[k+':'+a]=s[k]
+        return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
     paths={'plan':data['motion_plan'],'character':data['character']}
     paths.update({'guide:'+a:s['guide'] for a,s in data['actions'].items()})
     return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
@@ -149,13 +159,16 @@ def verify_job_contract(job,data):
     if data['schema']==1:
         require_text(data.get('legacy_reference_reason'),'Legacy job lacks explicit reuse reason; prepare again with a custom plan or explicit compatibility choice')
         return
-    validate_design(read(job/data['motion_plan']))
+    if data['schema']==3:
+        import reference_bundle as bundle_module
+        bundle_module.validate(read(job/data['reference_bundle']),job/'reference')
+    else:validate_design(read(job/data['motion_plan']))
     if not data.get('input_hashes') or fingerprints(job,data)!=data['input_hashes']:
         raise ValueError('Character, plan or guide changed; prepare a new reviewed job before generation/export')
 
 def review_reference(job,report):
     job,data=job_read(job);verify_job_contract(job,data)
-    if data['schema']!=2:raise ValueError('Reference review reports apply to custom jobs')
+    if data['schema'] not in [2,3]:raise ValueError('Reference review reports apply to custom or imported 3D jobs')
     if data.get('reference_review'):raise ValueError('Reference already reviewed; prepare a new job to revise it')
     report=read(report)
     if report.get('input_hashes')!=data['input_hashes']:raise ValueError('Review must identify the current character, plan and guides using input_hashes from job.json')
@@ -217,6 +230,8 @@ def remove_background(image, mode):
         rgba[mask]=0
     elif mode!='alpha':raise ValueError('Background must be auto, alpha or magenta')
     if int(rgba[:,:,3].min())==255:raise ValueError('Image is fully opaque; provide alpha or a supported keyed background')
+    edge=np.concatenate([rgba[0,:,3],rgba[-1,:,3],rgba[:,0,3],rgba[:,-1,3]])
+    if float((edge<=8).mean())<.98:raise ValueError('Cell background is not transparent around its perimeter; a token alpha pixel does not make a checkerboard transparent')
     return Image.fromarray(rgba)
 
 def extract(raw, columns, rows, count, background='auto'):
@@ -307,7 +322,7 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
          seconds=None, phases=None, tile=None, height=316, hold_from=None, observations=None, draft=False):
     job,data=job_read(job)
     verify_job_contract(job,data)
-    if data['schema']==2 and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
+    if data['schema'] in [2,3] and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
     if action not in data['actions']:raise ValueError('Action was not prepared in this job')
     spec=data['actions'][action]
     if not isinstance(action,str) or not __import__('re').fullmatch(r'[a-z][a-z0-9_-]{0,63}',action):raise ValueError('Unsafe action name')
@@ -319,13 +334,15 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     seconds=seconds if seconds is not None else spec['seconds']
     if not math.isfinite(seconds) or seconds<=0:raise ValueError('Duration must be positive and finite')
     phases=phases if phases is not None else spec.get('phases',[i/count for i in range(count)])
-    if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>=1 for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
-        raise ValueError('Phases must match frame count and strictly increase from zero to below one')
+    if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>1 or (p==1 and spec['loop']) for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
+        raise ValueError('Phases must strictly increase from zero; only non-looping actions may include the settled endpoint one')
     if not draft:
         expected_phases=spec.get('phases',[i/spec['count'] for i in range(spec['count'])])
         if (columns,rows,count)!=(spec['columns'],spec['rows'],spec['count']) or list(phases)!=list(expected_phases):
             raise ValueError('Export grid, frame count and phases must match the pose-review contract. Prepare and review a revised job; use --draft only for diagnostics.')
     raw=Image.open(image)
+    if data['schema']==3 and background not in ['auto',data['background_mode']]:raise ValueError('Background mode must match prepared generation contract')
+    if data['schema']==3 and background=='auto':background=data['background_mode']
     sources=extract(raw,columns,rows,count,background)
     sequence_result=None
     if not draft:
@@ -372,6 +389,7 @@ def parser():
     a=commands.add_parser('prepare');a.add_argument('--character',required=True);a.add_argument('--out',required=True)
     a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+');a.add_argument('--motion-plan');a.add_argument('--legacy-reference-reason')
     a.add_argument('--frame-indices',nargs='+',type=int)
+    a.add_argument('--reference-bundle');a.add_argument('--background-mode',choices=['alpha','magenta'],help='Imported reference bundles only; defaults to magenta')
     a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True)
     a.add_argument('--background',choices=['auto','alpha','magenta'],default='auto')
     a.add_argument('--observations');a.add_argument('--draft',action='store_true')

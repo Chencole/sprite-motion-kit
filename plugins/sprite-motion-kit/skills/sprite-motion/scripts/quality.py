@@ -54,9 +54,30 @@ def compare(reference,observed,edges):
             degrees=angle(r,o)
             if degrees>32:errors.append({'frame':i+1,'segment':[a,b],'angle_error':round(degrees,1)})
     if errors:raise ValueError('Generated poses do not match reference phases: '+json.dumps(errors[:12]))
-    return {'passed':True,'frames':len(reference),'segments_per_frame':len(edges)}
+    # Angles alone allow a whole row to float above its intended origin. Fit one
+    # scale for the entire clip, then allow only a constant offset per landmark
+    # (body proportions differ); changing offsets between frames are drift.
+    names=sorted({n for edge in edges for n in edge})
+    r=np.array([[f[n] for n in names] for f in reference],float)
+    o=np.array([[f['points'][n] for n in names] for f in observed],float)
+    ratios=[]
+    for rf,of in zip(reference,observed):
+        for a,b in edges:
+            ratios.append(np.linalg.norm(np.array(of['points'][b])-of['points'][a])/np.linalg.norm(np.array(rf[b])-rf[a]))
+    scale=float(np.median(ratios))
+    residual=o-r*scale
+    residual-=np.median(residual,axis=0,keepdims=True)
+    offsets=np.median(residual,axis=1)
+    extent=max(1.,float(np.ptp(r[:,:,1]))*scale)
+    drift=np.ptp(offsets,axis=0)
+    if float(max(drift))>max(2.,extent*.01):
+        raise ValueError('Generated cell registration drifts between frames: '+json.dumps({'span_pixels':drift.tolist(),'tolerance':max(2.,extent*.01)}))
+    return {'passed':True,'frames':len(reference),'segments_per_frame':len(edges),'registration_span_pixels':drift.tolist()}
 
 def reference_points(job,data,action,mannequin):
+    if data['schema']==3:
+        spec=data['actions'][action];ref=read(job/spec['landmarks'])
+        return ref['frames'],ref['edges']
     if data['schema']==1:
         path=Path(__file__).resolve().parents[1]/'assets'/f'{action}-landmarks.json'
         if not path.exists():raise ValueError('Legacy action has no measured pose contract; prepare a custom plan')
