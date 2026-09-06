@@ -33,6 +33,32 @@ class BundleTests(unittest.TestCase):
             d=Path(t);data=self.ready(d)
             (d/'job/reference/run-reference.png').write_bytes((d/'character.png').read_bytes())
             with self.assertRaises(ValueError):motion.verify_job_contract(d/'job',data)
+    def test_prompt_only_provider_is_blocked_before_requests_are_written(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);self.ready(d);before=(d/'job/job.json').read_bytes()
+            motion.write(d/'adapter.json',{'name':'prompt only','evidence':'Test tool schema','parameters':['prompt','referenced_image_paths']})
+            with self.assertRaisesRegex(ValueError,'no structured'):motion.generation_check(d/'job',d/'adapter.json')
+            self.assertEqual(before,(d/'job/job.json').read_bytes())
+            self.assertFalse(list((d/'job').glob('*-request.txt')))
+    def test_provider_controls_are_real_arguments_for_all_five(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);self.ready(d)
+            motion.write(d/'adapter.json',{'name':'fixture','evidence':'Synthetic schema','parameters':['prompt','size'],'canvas_binding':{'kind':'size_string','parameter':'size'},'supported_sizes':[[128,64]]})
+            result=motion.generation_check(d/'job',d/'adapter.json');self.assertEqual(len(result['packets']),5)
+            for p in result['packets']:
+                r=motion.read(p);self.assertEqual(r['tool_arguments'],{'size':'128x64'});self.assertFalse(r['automatic_retry'])
+                self.assertEqual(r['grid'],[4,2]);self.assertEqual(r['cell_ground_y'],28)
+    def test_prompt_cannot_masquerade_as_canvas_parameter(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);self.ready(d)
+            motion.write(d/'adapter.json',{'name':'fixture','evidence':'Synthetic schema','parameters':['prompt'],'canvas_binding':{'kind':'size_string','parameter':'prompt'},'supported_sizes':[[128,64]]})
+            with self.assertRaisesRegex(ValueError,'dedicated'):motion.generation_check(d/'job',d/'adapter.json')
+    def test_unsupported_size_rejects_entire_set_without_partial_requests(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);self.ready(d)
+            motion.write(d/'adapter.json',{'name':'fixture','evidence':'Synthetic schema','parameters':['width','height'],'canvas_binding':{'kind':'width_height','width':'width','height':'height'},'supported_sizes':[[64,64]]})
+            with self.assertRaisesRegex(ValueError,'no confirmed'):motion.generation_check(d/'job',d/'adapter.json')
+            self.assertFalse(list((d/'job').glob('*-request.txt')))
     def test_keyed_export_has_real_alpha_and_holds_nonloop_endpoint(self):
         with tempfile.TemporaryDirectory() as t:
             d=Path(t);self.ready(d);im=Image.new('RGB',(128,64),'#ff00ff')

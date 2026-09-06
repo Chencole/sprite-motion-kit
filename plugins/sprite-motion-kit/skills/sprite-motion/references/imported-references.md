@@ -29,9 +29,35 @@ generated pixels, never copied from these reference coordinates.
 Review the reference through its rendered playback; `review-reference` accepts
 the same five observations as custom-plan jobs. Its input hashes cover bundle,
 character, guide, full playback and landmarks. A change invalidates the job.
-Only then read the emitted action request, pass the full guide and character to
-the image tool, and generate ONE complete sheet for that action. Prepare all
-requested actions before selecting which one to run first.
+Reference review leaves requests locked until generation-check passes. Prepare
+all requested actions before selecting which one to run first.
+
+## Controls before generation
+
+Inspect the actual provider schema. Write an adapter JSON containing `name`,
+`evidence` (where its available schema was inspected), `parameters` (real argument
+names), `supported_sizes` (confirmed width/height pairs), and `canvas_binding`.
+Binding is either `{"kind":"size_string","parameter":"size"}` or
+`{"kind":"width_height","width":"width","height":"height"}`. These are
+formats, not a claim that any particular provider exposes those parameters.
+
+Run `motion.py generation-check --job JOB --adapter ADAPTER.json`. It validates
+the complete action set before writing any request. Unsupported sizes, missing
+dedicated controls, or passing size as prompt text are rejected without changing
+existing outputs. A prompt-only adapter must record that limitation and stop;
+do not invent a size parameter or repeatedly generate until one looks right.
+
+On success each action receives a generation packet with actual tool arguments,
+the full-sheet prompt, ordered references, common origin and baseline, input
+hashes and no automatic retry. Pass the tool arguments to the corresponding
+provider and both images to its reference input. Never convert the structured
+size control back into prose. Generate one full sheet per action.
+
+Canvas controls only constrain dimensions. Grid contents, footsteps, shield
+attachment and identity are still model outputs unless the provider exposes
+actual controls for them. The plugin does not manufacture those capabilities.
+An adapter is a host-supplied description; record honest evidence, not a guessed
+capability or a guarantee of perfect art.
 
 Magenta mode deliberately requests RGB solid-key images and extracts the key
 to alpha during pack. Alpha mode expects genuine transparency. No white or

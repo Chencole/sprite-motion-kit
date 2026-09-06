@@ -70,12 +70,15 @@ def prepare(character,out,bundle,name,background_mode):
             copied['actions'][action][k]=target;spec[k]='reference/'+target
         spec.update(alignment='reference_canvas',request=action+'-request.txt',status='awaiting_reference_review')
         background=('Use a perfectly uniform solid saturated magenta #FF00FF background, including gaps between bones and weapons. Do NOT draw a transparency checkerboard, white background, ground line, halo or shadow. The exporter keys this color to real alpha; the delivered atlas will be transparent.' if background_mode=='magenta' else 'Output genuine RGBA transparency, never a painted checkerboard or white background.')
-        spec['request_draft']=(f'Generate ONE coherent complete sprite sheet of {name}, not separate frame images. Reference 1 gives the exact projected 3D action, reference 2 gives the character appearance. '
+        width=s['columns']*s['tile'][0];height=s['rows']*s['tile'][1]
+        spec['request_draft']=(f'OUTPUT CANVAS: {width} x {height} pixels, aspect {width}:{height}. Exactly {s["columns"]} equal columns by {s["rows"]} equal rows. Never change the sheet aspect ratio. '
+          f'Generate ONE coherent complete sprite sheet of {name}, not separate frame images. Reference 1 controls camera, silhouette, placement and every action phase; reference 2 supplies appearance ONLY, never its standing pose or camera. '
+          'The body, head and both feet must match the projected orientation of reference 1, including when the appearance picture faces another direction. Do not copy and slightly vary the standing character. '
           f'Action {action}. Design: {json.dumps(s["design"],ensure_ascii=False)}. '
           f'Exactly {s["count"]} frames, {s["columns"]} columns and {s["rows"]} rows. Reference cell is {s["tile"][0]} by {s["tile"][1]}; total sheet aspect ratio must match it. '
           f'CELL COORDINATE CONTRACT: origin {s["origin"]}, ground y={s["floor_y"]} measured from EACH cell top. All rows share this same local coordinate. Scale all these coordinates uniformly if output size differs. '
           'Transfer the reference projected positions into the same cells; do not individually fit, recenter, resize, floor-align or rearrange poses. Ground-contact feet meet the common ground, airborne feet retain reference height, and falling bodies retain root displacement. '
-          'Preserve the same head, body dimensions, clothes and weapon sizes. Sword and shield stay bound to their original hands and follow the arms naturally. Every cell must keep the entire character and equipment inside padding. Blue/orange guide limbs are labels, not costume colors. '
+          'Preserve the same head, body dimensions, clothes and weapon sizes. Sword and shield stay bound to their original hands and follow the arms naturally. Every cell must keep the entire character and equipment inside padding. Blue/orange guide limbs are labels, not costume colors. Trace their changing near/far support identities across BOTH rows, not just the first row. '
           +background+' '+('Complete both opposite support phases and flow back into the first pose without a duplicate endpoint.' if s['loop'] else 'End at the full-size settled final pose and hold; no shrinking or disappearance.')+'\n')
         job['actions'][action]=spec
     motion.write(out/'reference/bundle.json',copied);job['input_hashes']=motion.fingerprints(out,job);motion.write(out/'job.json',job)
