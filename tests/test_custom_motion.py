@@ -127,13 +127,71 @@ class CustomMotionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'not been reviewed'):draft_pack(job,'hop',job/'reference/hop-guide.png')
             data=m.read(job/'job.json');report={'input_hashes':data['input_hashes'],'actions':{'hop':{k:True for k in ['anatomy','support_and_contact','timing','camera','end_state']}}}
             report['actions']['hop']['notes']='Engineering fixture: body rises above floor and returns upright.'
-            rp=d/'review.json';m.write(rp,report);motion.review_reference(job,rp)
+            rp=d/'review.json';m.write(rp,report);review=motion.review_reference(job,rp)
+            self.assertEqual(review['status'],'awaiting_generation_preflight')
+            self.assertEqual(review['requests'],[]);self.assertFalse((job/'hop-request.txt').exists())
+            spec=m.read(job/'job.json')['actions']['hop'];w,h=spec['columns']*spec['tile'][0],spec['rows']*spec['tile'][1]
+            adapter=d/'adapter.json';m.write(adapter,{'name':'Synthetic provider','evidence':'Test size parameter schema','parameters':['prompt','size'],'canvas_binding':{'kind':'size_string','parameter':'size'},'supported_sizes':[[w,h]]})
+            motion.generation_check(job,adapter)
             self.assertTrue((job/'hop-request.txt').is_file())
             self.assertIn('Human mass',(job/'hop-request.txt').read_text())
             for target in ['character.png','reference/motion-plan.json','reference/hop-guide.png']:
                 file=job/target;original=file.read_bytes();file.write_bytes(original+b' ')
                 with self.assertRaises(ValueError):draft_pack(job,'hop',job/'reference/hop-guide.png')
                 file.write_bytes(original)
+
+    def prepared_custom_job(self,d,background='magenta',color='blue'):
+        character=d/'character.png';Image.new('RGBA',(20,30),color).save(character)
+        p=custom_plan();p['actions']={'hop':p['actions']['hop']};p['frame_size']=[64,64]
+        plan=d/'plan.json';m.write(plan,p);job=d/'job'
+        motion.prepare(character,job,motion_plan=plan,background_mode=background)
+        data=m.read(job/'job.json');report={'input_hashes':data['input_hashes'],'actions':{'hop':{**dict.fromkeys(['anatomy','support_and_contact','timing','camera','end_state'],True),'notes':'Synthetic jump fixture; production artwork is not certified.'}}}
+        rp=d/'review.json';m.write(rp,report);motion.review_reference(job,rp)
+        return job,m.read(job/'job.json')
+
+    def test_custom_prompt_only_provider_is_blocked_without_mutating_job(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);job,data=self.prepared_custom_job(d);before=(job/'job.json').read_bytes()
+            adapter=d/'adapter.json';m.write(adapter,{'name':'Prompt only','evidence':'Test schema has no size control','parameters':['prompt','referenced_image_paths']})
+            with self.assertRaisesRegex(ValueError,'no structured'):motion.generation_check(job,adapter)
+            self.assertEqual((job/'job.json').read_bytes(),before)
+            self.assertFalse(list(job.glob('*-request.txt')));self.assertFalse(list(job.glob('*-generation.json')))
+            with self.assertRaisesRegex(ValueError,'canvas controls'):motion.pack(job,'hop',d/'unused.png')
+
+    def test_custom_supported_size_uses_arguments_and_declared_background(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);job,data=self.prepared_custom_job(d,background='alpha',color='magenta')
+            s=data['actions']['hop'];size=[s['columns']*s['tile'][0],s['rows']*s['tile'][1]]
+            adapter=d/'adapter.json';m.write(adapter,{'name':'Synthetic provider','evidence':'Test width/height schema','parameters':['prompt','width','height'],'canvas_binding':{'kind':'width_height','width':'width','height':'height'},'supported_sizes':[size]})
+            result=motion.generation_check(job,adapter);packet=m.read(result['packets'][0])
+            self.assertEqual(packet['tool_arguments'],dict(zip(['width','height'],size)))
+            self.assertEqual(packet['background_mode'],'alpha');self.assertEqual(packet['cell_ground_y'],s['origin'][1])
+            self.assertEqual(len(packet['references']),3);self.assertIn('genuine RGBA',packet['prompt']);self.assertNotIn('#FF00FF',packet['prompt'])
+            with self.assertRaisesRegex(ValueError,'Background mode'):motion.pack(job,'hop',job/'reference/hop-guide.png',background='magenta',draft=True)
+
+    def test_custom_diagnostic_cannot_be_exported_or_promoted(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);job,data=self.prepared_custom_job(d)
+            adapter=d/'adapter.json';m.write(adapter,{'name':'Prompt only','evidence':'Test schema has no size control','parameters':['prompt']})
+            result=motion.generation_check(job,adapter,diagnostic=True);packet=m.read(result['packets'][0])
+            self.assertTrue(packet['diagnostic_only']);self.assertEqual(packet['tool_arguments'],{})
+            with self.assertRaisesRegex(ValueError,'Diagnostic generation'):motion.pack(job,'hop',d/'unused.png')
+            before=(job/'job.json').read_bytes()
+            with self.assertRaisesRegex(ValueError,'cannot be promoted'):motion.generation_check(job,adapter)
+            self.assertEqual((job/'job.json').read_bytes(),before)
+
+    def test_custom_unsupported_size_keeps_requests_locked(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);job,data=self.prepared_custom_job(d)
+            adapter=d/'adapter.json';m.write(adapter,{'name':'Synthetic provider','evidence':'Test size schema','parameters':['size'],'canvas_binding':{'kind':'size_string','parameter':'size'},'supported_sizes':[[64,64]]})
+            with self.assertRaisesRegex(ValueError,'no confirmed'):motion.generation_check(job,adapter)
+            self.assertFalse(list(job.glob('*-request.txt')))
+
+    def test_custom_magenta_character_is_rejected_before_creating_job(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t)
+            with self.assertRaisesRegex(ValueError,'contains the magenta'):self.prepared_custom_job(d,color='magenta')
+            self.assertFalse((d/'job').exists())
 
     def test_custom_render_and_pack_roundtrip(self):
         # Renderer output is engineering input for this test, not AI character art.

@@ -9,6 +9,19 @@ from PIL import Image
 import motion
 import sprite_contract as contract
 
+def comparison_metadata(spec,source_size,registration_report=None,layout=None):
+    """Declare canvas transforms without fitting bodies or changing sprite pixels."""
+    if not all(k in spec for k in ('tile','origin','floor_y')):return {}
+    rw,rh=spec['tile'];sw,sh=source_size
+    scale=min(sw/(spec['columns']*rw),sh/(spec['rows']*rh))
+    layout=layout or (registration_report or {}).get('layout',{})
+    padding=layout.get('origin',[0,0]);rx,ry=spec['origin'];floor=spec['floor_y']
+    ground=registration_report['common_ground_y'] if registration_report else padding[1]+floor*scale
+    return {'origin':[padding[0]+rx*scale,ground+(ry-floor)*scale],
+            'floor_y':ground,'reference_origin':[rx,ry],
+            'reference_floor_y':floor,'reference_scale':scale,
+            'ground_basis':'inspected_row_contacts' if registration_report else 'declared_canvas'}
+
 def preview(job,images,out,registration=None):
     job,data=motion.job_read(job);motion.verify_job_contract(job,data)
     sources=motion.read(images);out=Path(out).resolve()
@@ -24,11 +37,12 @@ def preview(job,images,out,registration=None):
         cols,rows,n=spec['columns'],spec['rows'],spec['count']
         plan=contract.automatic_plan(source,clean,cols,rows,n)
         rects=plan['boxes']
-        w,h=max(r[2]-r[0] for r in rects),max(r[3]-r[1] for r in rects)
-        registered=None;registration_report=None
+        registered,layout=contract.render_cells(clean,plan)
+        registration_report=None
         if registration:
             from registration import register
-            registered,registration_report=register(clean,plan,registrations[action]);w,h=registered[0].size
+            registered,registration_report=register(clean,plan,registrations[action]);layout=registration_report['layout']
+        w,h=registered[0].size
         atlas=Image.new('RGBA',(w*n,h));warnings=[]
         expected=spec.get('tile',[w,h])
         if abs((clean.width/cols)/(clean.height/rows)-expected[0]/expected[1])>.04:
@@ -37,14 +51,18 @@ def preview(job,images,out,registration=None):
         for i in range(n):
             x,y=i%cols,i//cols
             box=rects[i]
-            frame=registered[i] if registered is not None else clean.crop(box);bounds=frame.getbbox()
+            frame=registered[i];bounds=frame.getbbox()
             if not bounds:warnings.append(f'第{i+1}帧为空。')
             elif bounds[0]==0 or bounds[1]==0 or bounds[2]==frame.width or bounds[3]==frame.height:
                 warnings.append(f'第{i+1}帧碰到格子边缘，可能跨格或被裁切。')
-            atlas.alpha_composite(frame,(i*w,0));frames.append({'source_box':box,'translation':[0,registration_report['row_translation_y'][y] if registration_report else 0],'scale':1})
+            atlas.alpha_composite(frame,(i*w,0));frames.append({'source_box':box,'translation':layout['frame_translations'][i],'scale':1})
         prepared.append((action,atlas,plan,source))
         clip={'name':action,'tile':[w,h],'count':n,'seconds':spec['seconds'],'phases':spec.get('phases',[i/n for i in range(n)]),'loop':spec['loop'],'draft':True,'sequence_check':None,'warnings':warnings,'reference':motion.data_url(job/spec['reference']),'reference_layout':spec['reference_layout']}
-        entries.append(clip);records.append({'action':action,'source':str(source),'frames':frames,'warnings':warnings,'accepted':False,'registration':registration_report})
+        clip.update(comparison_metadata(spec,clean.size,registration_report,layout))
+        if spec.get('guide'):
+            clip.update({'pose_reference':motion.data_url(job/spec['guide']),
+                         'pose_reference_layout':{'tile':spec['tile'],'columns':cols,'count':n}})
+        entries.append(clip);records.append({'action':action,'source':str(source),'frames':frames,'warnings':warnings,'accepted':False,'registration':registration_report,'layout':layout})
     out.mkdir(parents=True)
     for entry,(action,atlas,plan,source) in zip(entries,prepared):
         motion.write(out/(action+'-crop.json'),plan)

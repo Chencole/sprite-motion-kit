@@ -32,7 +32,7 @@ The agent:
 1. Records the complete requested character/action coverage, then interprets body, view and timing.
 2. Authors a JSON rig and whole-body key poses, including attached weapon endpoints and extra limbs as needed.
 3. Validates and renders that custom motion locally; inspects and corrects its poses.
-4. Feeds each actual pose guide and the original character to the available image tool.
+4. Reviews the reference and checks the available image tool's declared canvas controls before unlocking requests, then supplies the complete pose guide, original character and endpoint reference together.
 5. Checks the generated grid, transparency and continuity, exports frames/atlases, and opens the reference/character reviewer.
 6. Checks the whole batch against that coverage. Missing run/attack/etc. remains incomplete even if a death clip is finished. Current exported-art reviews are required before `batch.py finish` succeeds.
 
@@ -59,8 +59,11 @@ python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py rende
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py prepare --character character.png --motion-plan jobs/plan.json --out jobs/character
 # Inspect actual references and record matching hashes/checks before generation.
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py review-reference --job jobs/character --report reference-review.json
-# The host image tool generates the action sheet from this job's guide and character.
-python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py pack --job jobs/character --action overhead_cut --image generated-cut.png
+# Inspect the actual provider schema and record real parameters and supported sizes.
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py generation-check --job jobs/character --adapter provider.json
+# The host passes the packet's tool_arguments as actual API arguments and uses all three references.
+# Inspect a source-bound crop overlay and annotate actual generated joints before final packing.
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py pack --job jobs/character --action overhead_cut --image generated-cut.png --observations observations.json --crop-plan crop.json
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/batch.py attach --batch jobs/batch --character guard --job jobs/character
 python plugins/sprite-motion-kit/skills/sprite-motion/scripts/batch.py status --batch jobs/batch
 # Review all exported actions, then finish; missing actions cause a nonzero exit.
@@ -79,6 +82,8 @@ The renderer is a shaded skeletal proxy, not a physics or character-animation mo
 
 Use true alpha for characters with bright magenta details. Baked white/checkerboard backgrounds and clipped cells are rejected. Dark purple artwork is preserved by the narrower magenta key.
 
+Custom schema-2 plans and imported schema-3 references use the same generation gate. Preparation defaults to `--background-mode magenta`; select `alpha` for a character containing the key color. Reference review alone does not unlock generation. The provider adapter must record actual inspected parameters and confirmed sizes; prompt-only tools are blocked for production. The script checks this declaration and writes a packet, but does not invoke the provider or verify that the host submitted those arguments. See the [adapter contract](plugins/sprite-motion-kit/skills/sprite-motion/references/imported-references.md). An explicitly requested `--diagnostic` preview remains nonproduction, and its preflight cannot be changed later to approve the same generated art.
+
 ## Development and distribution
 
 ```sh
@@ -92,4 +97,4 @@ This repository contains no private game code, saves, character artwork, credent
 
 ## 生成前置检查
 
-默认入口必须提供角色分析、动作构思和自定义三维方案。工具先生成参考，AI 实际检查并提交记录后才解锁生成请求。替换角色图、方案或参考图会使检查失效。旧模板只可通过 `--legacy-reference-reason` 显式复用，不再作为缺省流程。检查记录不等于美术质量认证。详见插件内 motion-contract。
+默认入口必须提供角色分析、动作构思和自定义三维方案。工具先生成参考，AI 实际检查并提交记录，再通过真实生成工具的尺寸能力声明检查后才解锁生成请求；自定义方案与导入参考使用相同门槛。仅支持提示词的工具只能在用户明确要求的诊断预览中使用，诊断不能转为正式素材。替换角色图、方案或参考图会使检查失效。旧模板只可通过 `--legacy-reference-reason` 显式复用，不再作为缺省流程。检查记录不等于美术质量认证。详见插件内 motion-contract。

@@ -102,3 +102,30 @@ def validate_pixels(clean,rects):
         if b[0]==0 or b[1]==0 or b[2]==frame.width or b[3]==frame.height:raise ValueError(f'Frame {i+1} touches a cut edge; no clipped animation may be exported')
         remaining.paste(0,tuple(r))
     if remaining.getbbox():raise ValueError('Crop plan would discard foreground outside its cells')
+
+
+def cell_layout(plan,size,row_offsets=None):
+    """Shared source-cell coordinate transform for preview, export and pose checks."""
+    columns,rows,count=plan['grid'];rects=boxes(plan,size,columns,rows,count)
+    offsets=[0]*rows if row_offsets is None else row_offsets
+    if len(offsets)!=rows or any(type(v)is not int for v in offsets):raise ValueError('One integer registration offset is required per source row')
+    placements=[]
+    for i,r in enumerate(rects):
+        row,col=divmod(i,columns)
+        # Source partitions may move to avoid art, but the logical cell origin does not.
+        nominal_x=round(col*size[0]/columns) if plan.get('schema')==2 else r[0]
+        nominal_y=round(row*size[1]/rows) if plan.get('schema')==2 else r[1]
+        placements.append([r[0]-nominal_x,r[1]-nominal_y+offsets[row]])
+    pad_x=max(0,-min(p[0] for p in placements));pad_y=max(0,-min(p[1] for p in placements))
+    placements=[[x+pad_x,y+pad_y] for x,y in placements]
+    w=max(r[2]-r[0]+p[0] for r,p in zip(rects,placements));h=max(r[3]-r[1]+p[1] for r,p in zip(rects,placements))
+    return {'tile':[w,h],'origin':[pad_x,pad_y],'frame_translations':placements,'row_offsets':offsets}
+
+
+def render_cells(clean,plan,row_offsets=None):
+    """Keep logical grid origins stable when physical safe separators move."""
+    layout=cell_layout(plan,clean.size,row_offsets);rects=plan['boxes']
+    validate_pixels(clean,rects);frames=[]
+    for r,point in zip(rects,layout['frame_translations']):
+        canvas=Image.new('RGBA',tuple(layout['tile']));canvas.alpha_composite(clean.crop(r),tuple(point));frames.append(canvas)
+    return frames,layout

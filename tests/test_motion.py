@@ -67,6 +67,11 @@ class MotionTests(unittest.TestCase):
         path=self.root/'walk.png';sheet(4,2).save(path)
         for kwargs in [{'count':0},{'columns':0},{'seconds':0},{'seconds':float('nan')},{'phases':[0]*8},{'hold_from':1}]:
             with self.subTest(kwargs=kwargs),self.assertRaises(ValueError):draft_pack(self.job,'walk',path,**kwargs)
+    def test_final_hold_cannot_replace_checked_sequence(self):
+        path=self.root/'death.png';sheet(4,3,death=True).save(path)
+        before=(self.job/'job.json').read_bytes()
+        with self.assertRaisesRegex(ValueError,'replace reviewed motion'):motion.pack(self.job,'death',path,hold_from=0)
+        self.assertFalse((self.job/'death').exists());self.assertEqual(before,(self.job/'job.json').read_bytes())
     def test_loop_custom_phases_and_source_repack(self):
         path=self.root/'walk.png';sheet(4,2).save(path)
         phases=[0,.125,.25,.375,.5,.625,.75,.95]

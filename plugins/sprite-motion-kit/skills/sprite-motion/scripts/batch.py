@@ -81,6 +81,7 @@ def attach(batch, character, job):
 def evidence(job, character_hash, action):
     job, jd = motion.job_read(job)
     motion.verify_job_contract(job, jd)
+    if jd['schema'] in [2,3] and not jd.get('generation_preflight'):raise ValueError('Generation-time canvas controls were not verified; prepare and generate a new job before batch approval')
     if jd.get('generation_preflight',{}).get('diagnostic_only'):raise ValueError('Diagnostic generation is not an approved replacement batch')
     if digest(job / jd['character']) != character_hash:
         raise ValueError('Character image changed')
@@ -93,12 +94,14 @@ def evidence(job, character_hash, action):
     if clip.get('draft',True) or not clip.get('sequence_check',{}):
         raise ValueError('Draft or legacy export lacks per-frame pose verification')
     observation_path=dest/'pose-observations.json'
-    rectangles=None;crop_path=dest/'crop-plan.json'
+    if clip.get('hold_from') is not None and clip['hold_from']<clip['count']-1:raise ValueError('Export changes the reviewed source motion with hold_from')
+    rectangles=None;point_offsets=None;crop_path=dest/'crop-plan.json'
     if clip.get('crop_plan_sha256'):
         if digest(crop_path)!=clip['crop_plan_sha256'] or motion.read(observation_path).get('crop_plan_sha256')!=digest(crop_path):raise ValueError('Crop geometry changed after pose review')
-        s=jd['actions'][action];_,rectangles=motion.contract_module().load_crop(crop_path,dest/clip['source'],s['columns'],s['rows'],s['count'])
+        s=jd['actions'][action];crop_data,rectangles=motion.contract_module().load_crop(crop_path,dest/clip['source'],s['columns'],s['rows'],s['count'])
+        if crop_data.get('schema')==2:point_offsets=motion.contract_module().cell_layout(crop_data,crop_data['image_size'])['frame_translations']
     elif jd['actions'][action].get('endpoints'):raise ValueError('Export is missing its reviewed crop geometry')
-    result=motion.quality_module().check(job,jd,action,dest/clip['source'],motion.read(observation_path),motion.mannequin_module(),rectangles)
+    result=motion.quality_module().check(job,jd,action,dest/clip['source'],motion.read(observation_path),motion.mannequin_module(),rectangles,point_offsets)
     if result!=clip['sequence_check']:raise ValueError('Pose verification changed; review this output again')
     if clip['action'] != action or clip.get('plan_sha256') != jd.get('plan_sha256'):
         raise ValueError('Clip does not belong to the current action/plan')
@@ -111,7 +114,7 @@ def evidence(job, character_hash, action):
     # job.json status changes when another action is packed; hash stable inputs instead.
     files = files[1:] + [job / jd['character']]
     if jd['schema'] == 2:
-        files += [job / jd['motion_plan'], job / jd['actions'][action]['guide']]
+        files += [job / jd['motion_plan'], job / jd['actions'][action]['guide'], job / jd['actions'][action]['reference']]
     elif jd['schema'] == 3:
         files += [job / jd['reference_bundle']]
         files += [job / jd['actions'][action][k] for k in ['guide','reference','landmarks']]

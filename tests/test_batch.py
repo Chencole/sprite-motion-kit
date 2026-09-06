@@ -77,6 +77,18 @@ class BatchTests(unittest.TestCase):
         report=self.root/'invalid-approval.json';motion.write(report,{'artifact_hashes':{}})
         with self.assertRaisesRegex(ValueError,'Draft'):batch.review(self.batch,'knight','walk',report)
 
+    def test_custom_and_imported_exports_require_recorded_preflight(self):
+        # Isolate old-job acceptance from unrelated reference-file validation.
+        for schema in [2,3]:
+            with self.subTest(schema=schema), patch.object(motion,'job_read',return_value=(self.root,{'schema':schema})), patch.object(motion,'verify_job_contract'):
+                with self.assertRaisesRegex(ValueError,'canvas controls'):batch.evidence(self.root,'unused-character-hash','walk')
+
+    def test_diagnostic_preflight_cannot_complete_batch(self):
+        for schema in [2,3]:
+            job={'schema':schema,'generation_preflight':{'diagnostic_only':True}}
+            with self.subTest(schema=schema), patch.object(motion,'job_read',return_value=(self.root,job)), patch.object(motion,'verify_job_contract'):
+                with self.assertRaisesRegex(ValueError,'Diagnostic generation'):batch.evidence(self.root,'unused-character-hash','walk')
+
     def test_all_packed_still_requires_visual_review(self):
         self.job(['walk','run','attack','death','jump','thrust','overhead_cut'])
         with self.assertRaisesRegex(ValueError,'awaiting_visual_review'): batch.finish(self.batch)

@@ -2,20 +2,46 @@
 *{box-sizing:border-box}body{background:#17242c;color:#e2ecf0;font:16px system-ui,sans-serif;margin:0}main{max-width:1100px;padding:24px;margin:auto}h1{font-size:26px}p{color:#b1c3cc}.card{border:1px solid #526978;border-radius:12px;background:#26343e;margin:20px 0;overflow:hidden}h2{padding:16px;margin:0;font-size:18px}.pair{display:grid;grid-template-columns:1fr 1fr}.label{text-align:center;color:#b1c3cc}canvas{width:100%;height:auto;display:block}.controls{display:flex;flex-wrap:wrap;gap:8px;padding:14px;background:#20313c}button,select{padding:10px;border:1px solid #69848d;border-radius:6px;background:#354b56;color:white;font:inherit;cursor:pointer}output{margin-left:auto}footer{line-height:1.6;color:#b1c3cc}
 </style><main><h1>Sprite Motion Kit</h1><p>动作参考与角色同步播放 · Reference / generated character</p><div id="clips"></div><footer>暂停检查左右换腿、落脚和首尾接续。死亡停在尸体末帧。导出完成不代表美术验收通过。<br>Pause to inspect feet, body motion and the loop seam. Death holds its final pose. Export is not visual approval.</footer></main><script>
 const clips=__CLIPS__;
+// REVIEW_MATH_START: pure geometry/timing, also exercised without a browser.
+function poseIndex(c,time){let j=0;for(let i=1;i<c.count;i++)if(c.phases[i]<=time/c.seconds+1e-8)j=i;return j}
+function referenceIndex(c,time,count,matched){
+ const phase=matched?c.phases[poseIndex(c,time)]:Math.max(0,Math.min(1,time/c.seconds));
+ const slots=c.loop?count:Math.max(0,count-1);
+ return Math.max(0,Math.min(count-1,matched?Math.round(phase*slots):Math.floor(phase*slots+1e-8)));
+}
+function comparisonGeometry(c){
+ const [w,h]=c.tile,[rw,rh]=(c.reference_layout||{tile:[256,320]}).tile;
+ if(!c.origin||!c.reference_origin||!Number.isFinite(c.floor_y)||!Number.isFinite(c.reference_floor_y)||!(c.reference_scale>0)){
+  const scale=Math.min(w/rw,h/rh);return {width:w,height:h,art:[0,0],reference:[(w-rw*scale)/2,(h-rh*scale)/2],scale,ground:null};
+ }
+ const scale=c.reference_scale,dx=c.origin[0]-c.reference_origin[0]*scale,dy=c.floor_y-c.reference_floor_y*scale;
+ const left=Math.min(0,dx),top=Math.min(0,dy),right=Math.max(w,dx+rw*scale),bottom=Math.max(h,dy+rh*scale);
+ return {width:Math.ceil(right-left),height:Math.ceil(bottom-top),art:[-left,-top],reference:[dx-left,dy-top],scale,ground:c.floor_y-top};
+}
+// REVIEW_MATH_END
 for(const c of clips){
  const card=document.createElement('section');card.className='card';document.querySelector('#clips').append(card);
- card.innerHTML='<h2></h2><div class="pair"><div><div class="label">参考 / Reference</div><canvas class="ref"></canvas></div><div><div class="label">角色 / Character</div><canvas class="art"></canvas></div></div><div class="controls"><button data-b="play">暂停 / Pause</button><button data-b="prev">←</button><button data-b="next">→</button><button data-b="restart">重播 / Replay</button><select aria-label="Playback speed"><option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select><output></output></div>';
+ card.innerHTML='<h2></h2><div class="pair"><div><div class="label">参考 / Reference</div><canvas class="ref"></canvas></div><div><div class="label">角色 / Character</div><canvas class="art"></canvas></div></div><div class="controls"><button data-b="play">暂停 / Pause</button><button data-b="prev">←</button><button data-b="next">→</button><button data-b="restart">重播 / Replay</button><select data-control="speed" aria-label="Playback speed"><option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select><select data-control="reference" aria-label="Reference timing"><option value="poses">同步关键帧 / Matched poses</option><option value="continuous">连续参考 / Continuous reference</option></select><output></output></div>';
  card.querySelector('h2').textContent=({walk:'行走 / Walk',death:'倒地 / Death',jump:'跳跃 / Jump',run:'奔跑 / Run',attack:'攻击 / Attack'})[c.name]||c.name;
  for(const warning of c.warnings||[]){const p=document.createElement('p');p.textContent=warning;p.style.cssText='padding:0 16px;color:#ffcc87';card.querySelector('h2').after(p)}
  if(c.draft||!c.sequence_check){const note=document.createElement('p');note.textContent='草稿：未通过逐帧姿势验收，不可批量替换 / Draft: not approved';note.style.cssText='padding:0 16px;color:#ffcc87';card.querySelector('h2').after(note)}
- const art=card.querySelector('.art'),ref=card.querySelector('.ref'),ctx=art.getContext('2d'),rx=ref.getContext('2d'),im=new Image(),ri=new Image(),[w,h]=c.tile;
- art.width=ref.width=w;art.height=ref.height=h;im.src=c.character;ri.src=c.reference;
- let time=0,playing=true,rate=1,last=performance.now();
- const index=()=>{let j=0;for(let i=1;i<c.count;i++)if(c.phases[i]<=time/c.seconds+1e-8)j=i;return j};
- function draw(){const layout=c.reference_layout||{tile:[256,320],columns:12,count:72};let j=index(),k=Math.min(layout.count-1,Math.floor(time/c.seconds*layout.count));ctx.fillStyle=rx.fillStyle='#26343e';ctx.fillRect(0,0,w,h);rx.fillRect(0,0,w,h);ctx.imageSmoothingEnabled=false;if(im.complete&&im.naturalWidth)ctx.drawImage(im,j*w,0,w,h,0,0,w,h);if(ri.complete&&ri.naturalWidth){const [rw,rh]=layout.tile,scale=Math.min(w/rw,h/rh);rx.drawImage(ri,(k%layout.columns)*rw,Math.floor(k/layout.columns)*rh,rw,rh,(w-rw*scale)/2,(h-rh*scale)/2,rw*scale,rh*scale)}card.querySelector('output').textContent=`${j+1} / ${c.count}`;card.querySelector('[data-b="play"]').textContent=playing?'暂停 / Pause':'播放 / Play'}
+ const art=card.querySelector('.art'),ref=card.querySelector('.ref'),ctx=art.getContext('2d'),rx=ref.getContext('2d'),im=new Image(),ri=new Image(),pi=new Image(),[w,h]=c.tile,geometry=comparisonGeometry(c);
+ art.width=ref.width=geometry.width;art.height=ref.height=geometry.height;im.src=c.character;ri.src=c.reference;if(c.pose_reference)pi.src=c.pose_reference;
+ let time=0,playing=true,rate=1,matched=true,last=performance.now();
+ const index=()=>poseIndex(c,time);
+ function draw(){
+  const useGuide=matched&&c.pose_reference&&c.pose_reference_layout,layout=useGuide?c.pose_reference_layout:(c.reference_layout||{tile:[256,320],columns:12,count:72});
+  const j=index(),k=useGuide?j:referenceIndex(c,time,layout.count,matched),source=useGuide?pi:ri;
+  for(const context of [ctx,rx]){context.fillStyle='#26343e';context.fillRect(0,0,geometry.width,geometry.height);context.imageSmoothingEnabled=false}
+  if(im.complete&&im.naturalWidth)ctx.drawImage(im,j*w,0,w,h,...geometry.art,w,h);
+  if(source.complete&&source.naturalWidth){const [rw,rh]=layout.tile;rx.drawImage(source,(k%layout.columns)*rw,Math.floor(k/layout.columns)*rh,rw,rh,...geometry.reference,rw*geometry.scale,rh*geometry.scale)}
+  if(geometry.ground!==null)for(const context of [ctx,rx]){context.save();context.strokeStyle='#8ba8b7';context.setLineDash([5,5]);context.beginPath();context.moveTo(0,geometry.ground+.5);context.lineTo(geometry.width,geometry.ground+.5);context.stroke();context.restore()}
+  card.querySelector('output').textContent=`${j+1} / ${c.count}`;card.querySelector('[data-b="play"]').textContent=playing?'暂停 / Pause':'播放 / Play';
+ }
  card.querySelector('[data-b="play"]').onclick=()=>{playing=!playing;if(!c.loop&&time>=c.seconds&&playing)time=0;draw()};
  for(const [b,d] of [['prev',-1],['next',1]])card.querySelector(`[data-b="${b}"]`).onclick=()=>{playing=false;let j=index()+d;j=c.loop?(j+c.count)%c.count:Math.max(0,Math.min(c.count-1,j));time=c.phases[j]*c.seconds;draw()};
- card.querySelector('[data-b="restart"]').onclick=()=>{time=0;playing=true;draw()};card.querySelector('select').onchange=e=>{rate=Number(e.target.value)};
+ card.querySelector('[data-b="restart"]').onclick=()=>{time=0;playing=true;draw()};card.querySelector('[data-control="speed"]').onchange=e=>{rate=Number(e.target.value)};
+ card.querySelector('[data-control="reference"]').onchange=e=>{matched=e.target.value==='poses';draw()};
  function tick(now){if(playing){time+=(now-last)/1000*rate;if(c.loop)time%=c.seconds;else if(time>=c.seconds){time=c.seconds;playing=false}}last=now;draw();requestAnimationFrame(tick)}requestAnimationFrame(tick)
 }
 </script></html>

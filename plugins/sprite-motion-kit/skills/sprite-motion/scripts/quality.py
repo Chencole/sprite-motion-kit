@@ -54,6 +54,36 @@ def compare(reference,observed,edges):
             degrees=angle(r,o)
             if degrees>32:errors.append({'frame':i+1,'segment':[a,b],'angle_error':round(degrees,1)})
     if errors:raise ValueError('Generated poses do not match reference phases: '+json.dumps(errors[:12]))
+    # A repeated neutral pose can sit within the per-frame angle tolerance for
+    # an entire small attack. Check the *changing* direction of each segment
+    # separately; averaging over the whole body hides an unmoving weapon arm.
+    # Unit directions allow fixed limb lengths/body proportions to differ.
+    motion_checks=[];motion_errors=[]
+    for a,b in edges:
+        rv=np.array([np.array(f[b])-f[a] for f in reference],float)
+        ov=np.array([np.array(f['points'][b])-f['points'][a] for f in observed],float)
+        ru=rv/np.linalg.norm(rv,axis=1,keepdims=True)
+        ou=ov/np.linalg.norm(ov,axis=1,keepdims=True)
+        reference_swing=math.degrees(math.acos(float(np.clip(np.min(ru@ru.T),-1,1))))
+        # Require both angular change and meaningful travel at the generated
+        # character's segment length. A tiny segment rotating less than three
+        # pixels cannot be distinguished reliably from annotation differences.
+        projected_travel=2*math.sin(math.radians(reference_swing)/2)*float(np.median(np.linalg.norm(ov,axis=1)))
+        if reference_swing<20 or projected_travel<3:continue
+        observed_swing=math.degrees(math.acos(float(np.clip(np.min(ou@ou.T),-1,1))))
+        amplitude_ratio=observed_swing/reference_swing
+        rc=ru-ru.mean(axis=0);oc=ou-ou.mean(axis=0)
+        denominator=float(np.linalg.norm(rc)*np.linalg.norm(oc))
+        correlation=float(np.clip(np.sum(rc*oc)/denominator,-1,1)) if denominator>1e-10 else 0.
+        measurement={'segment':[a,b],'reference_swing_degrees':round(reference_swing,3),
+                     'observed_swing_degrees':round(observed_swing,3),
+                     'expected_travel_pixels':round(projected_travel,3),
+                     'amplitude_ratio':round(amplitude_ratio,4),'phase_correlation':round(correlation,4)}
+        motion_checks.append(measurement)
+        # Retain at least half of the reference swing and its phase direction;
+        # a static pose, token wiggle or reversed/uncorrelated swing must fail.
+        if amplitude_ratio<.5 or correlation<.5:motion_errors.append(measurement)
+    if motion_errors:raise ValueError('Generated segment motion loses material movement or reference phases: '+json.dumps(motion_errors[:12]))
     # Angles alone allow a whole row to float above its intended origin. Fit one
     # scale for the entire clip, then allow only a constant offset per landmark
     # (body proportions differ); changing offsets between frames are drift.
@@ -72,7 +102,8 @@ def compare(reference,observed,edges):
     drift=np.ptp(offsets,axis=0)
     if float(max(drift))>max(2.,extent*.01):
         raise ValueError('Generated cell registration drifts between frames: '+json.dumps({'span_pixels':drift.tolist(),'tolerance':max(2.,extent*.01)}))
-    return {'passed':True,'frames':len(reference),'segments_per_frame':len(edges),'registration_span_pixels':drift.tolist()}
+    return {'passed':True,'frames':len(reference),'segments_per_frame':len(edges),
+            'segment_motion':motion_checks,'registration_span_pixels':drift.tolist()}
 
 def reference_points(job,data,action,mannequin):
     if data['schema']==3:
@@ -120,15 +151,23 @@ def observations_template(job,data,action,image,mannequin):
       'frames':[{'frame':i,'points':{n:None for n in r}} for i,r in enumerate(ref)],
       'visual_checks':{k:False for k in ['landmarks_match_pixels','identity_and_equipment','support_and_weight','loop_or_settling','camera']},'notes':''}
 
-def check(job,data,action,image,report,mannequin,rectangles=None):
+def check(job,data,action,image,report,mannequin,rectangles=None,point_offsets=None):
     if report.get('action')!=action or report.get('source_sha256')!=digest(image) or report.get('guide_sha256')!=digest(job/data['actions'][action]['guide']):
         raise ValueError('Pose observations must match the exact action, generated image and current guide')
     for k in ['landmarks_match_pixels','identity_and_equipment','support_and_weight','loop_or_settling','camera']:
         if report.get('visual_checks',{}).get(k) is not True:raise ValueError('Visual observation not passed: '+k)
     if not str(report.get('notes','')).strip():raise ValueError('Concrete visual observations required')
     ref,edges=reference_points(job,data,action,mannequin)
-    result=compare(ref,report.get('frames',[]),edges)
-    result['endpoints']=endpoint_check(ref,report['frames'],edges,data['actions'][action]['loop'])
+    measured=report.get('frames',[])
+    if point_offsets is not None:
+        if len(point_offsets)!=len(measured) or any(len(p)!=2 or any(not isinstance(v,(int,float)) or not math.isfinite(v) for v in p) for p in point_offsets):raise ValueError('Crop coordinate offsets must cover every observed frame')
+        import copy
+        measured=copy.deepcopy(measured)
+        for frame,offset in zip(measured,point_offsets):
+            for name,point in frame['points'].items():
+                if isinstance(point,list) and len(point)==2:frame['points'][name]=[point[k]+offset[k] for k in range(2)]
+    result=compare(ref,measured,edges)
+    result['endpoints']=endpoint_check(ref,measured,edges,data['actions'][action]['loop'])
     # Catch copied guide coordinates, off-canvas marks and marks in empty space.
     # This still does not identify which bone a foreground pixel belongs to.
     pixels=np.array(Image.open(image).convert('RGBA'));rgb=pixels[:,:,:3].astype(int)

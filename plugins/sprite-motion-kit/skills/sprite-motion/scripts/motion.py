@@ -64,11 +64,11 @@ def prepare(character, out, actions=None, name='the supplied character', motion_
         if any(v is not None for v in [motion_plan,legacy_reference_reason,frame_indices,actions]):raise ValueError('Reference bundle defines its own actions, timing and rig; do not combine preparation modes')
         import reference_bundle as bundle_module
         return bundle_module.prepare(character,out,reference_bundle,name,background_mode or 'magenta')
-    if background_mode is not None:raise ValueError('Explicit background-mode currently requires reference-bundle; other job modes select background at pack')
     if motion_plan is not None:
         if frame_indices is not None:raise ValueError('Set frame_count in the custom plan instead')
         if legacy_reference_reason is not None:raise ValueError('Choose a custom plan or explicit legacy reuse, not both')
-        return prepare_custom(character,out,motion_plan,actions,name)
+        return prepare_custom(character,out,motion_plan,actions,name,background_mode or 'magenta')
+    if background_mode is not None:raise ValueError('Explicit background-mode requires a custom motion plan or reference bundle; legacy jobs select background at pack')
     require_text(legacy_reference_reason,'A custom motion plan is required. Legacy reuse requires --legacy-reference-reason explaining why the approved reference fits this character.')
     actions=actions or tuple(PRESETS)
     if not actions or any(a not in PRESETS for a in actions):raise ValueError('Choose walk and/or death')
@@ -159,6 +159,7 @@ def fingerprints(job,data):
         return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
     paths={'plan':data['motion_plan'],'character':data['character']}
     paths.update({'guide:'+a:s['guide'] for a,s in data['actions'].items()})
+    paths.update({'reference:'+a:s['reference'] for a,s in data['actions'].items()})
     paths.update({'endpoints:'+a:s['endpoint_reference'] for a,s in data['actions'].items() if s.get('endpoint_reference')})
     return {k:hashlib.sha256((job/v).read_bytes()).hexdigest() for k,v in paths.items()}
 
@@ -185,17 +186,18 @@ def review_reference(job,report):
             if check.get(field) is not True:raise ValueError(name+': reference review must pass '+field)
         require_text(check.get('notes'),name+': document observed reference motion in review notes')
     for spec in data['actions'].values():
-        if data['schema']!=3:(job/spec['request']).write_text(spec.pop('request_draft'),encoding='utf-8')
-        spec['status']='awaiting_generation_preflight' if data['schema']==3 else 'awaiting_generation'
-    data['reference_review']=report;data['status']='awaiting_generation_preflight' if data['schema']==3 else 'ready_for_generation';write(job/'job.json',data)
-    return {'status':data['status'],'requests':[] if data['schema']==3 else [str(job/s['request']) for s in data['actions'].values()],
+        spec['status']='awaiting_generation_preflight'
+    data['reference_review']=report;data['status']='awaiting_generation_preflight';write(job/'job.json',data)
+    return {'status':data['status'],'requests':[],
             'notice':'Review records agent observations; it does not automatically certify animation quality.'}
 
 def generation_check(job,adapter,diagnostic=False):
     """Fail before a provider call when output size exists only in prompt prose."""
     job,data=job_read(job);verify_job_contract(job,data)
-    if data['schema']!=3:raise ValueError('Generation preflight requires an imported reference bundle')
+    if data['schema'] not in [2,3]:raise ValueError('Generation preflight requires a custom motion plan or imported reference bundle')
     if not data.get('reference_review'):raise ValueError('Inspect and review the reference first')
+    if data.get('generation_preflight'):raise ValueError('Generation preflight is already recorded; prepare a new job for a different provider or production attempt. Diagnostic art cannot be promoted.')
+    if data.get('background_mode') not in ['alpha','magenta']:raise ValueError('Prepare a new job with an explicit background contract before generation')
     provider=read(adapter)
     require_text(provider.get('name'),'Name the actual available generation tool')
     require_text(provider.get('evidence'),'Record the inspected tool schema or official adapter documentation')
@@ -225,24 +227,32 @@ def generation_check(job,adapter,diagnostic=False):
     data['generation_preflight']={'adapter':provider,'input_hashes':data['input_hashes'],'diagnostic_only':diagnostic};data['status']='ready_for_diagnostic_generation' if diagnostic else 'ready_for_generation';write(job/'job.json',data)
     return {'status':data['status'],'packets':[str(job/(a+'-generation.json')) for a in packets],'notice':'Pass tool_arguments as actual provider arguments; never silently move them into prose or retry rejected output.'}
 
-def prepare_custom(character,out,motion_plan,actions,name):
+def prepare_custom(character,out,motion_plan,actions,name,background_mode='magenta'):
     mannequin=mannequin_module();plan=read(motion_plan);mannequin.validate(plan)
     if plan.get('design_status')!='authored':raise ValueError('Host AI must design this motion plan and set design_status to authored before character generation preparation. Render draft guides directly for inspection.')
     validate_design(plan)
     if actions is not None:
         if not actions or any(a not in plan['actions'] for a in actions):raise ValueError('Requested action is missing from the motion plan')
         plan['actions']={a:plan['actions'][a] for a in actions}
-    character=Path(character).resolve();Image.open(character).verify();out=Path(out).resolve()
+    character=Path(character).resolve();image=Image.open(character).convert('RGBA');out=Path(out).resolve()
+    if background_mode not in ['alpha','magenta']:raise ValueError('Select alpha or magenta')
+    rgb=np.asarray(image).astype(int)
+    if background_mode=='magenta' and np.any((rgb[:,:,3]>128)&(rgb[:,:,0]>180)&(rgb[:,:,2]>170)&(rgb[:,:,1]<100)&(np.minimum(rgb[:,:,0],rgb[:,:,2])-rgb[:,:,1]>90)):
+        raise ValueError('Character contains the magenta key color; use alpha mode to preserve its artwork')
     if out.exists() and any(out.iterdir()):raise ValueError('Use a new empty job directory; existing work is preserved')
-    out.mkdir(parents=True,exist_ok=True);Image.open(character).convert('RGBA').save(out/'character.png')
+    out.mkdir(parents=True,exist_ok=True);image.save(out/'character.png')
     mannequin.render(plan,out/'reference')
     guide=read(out/'reference/guide.json')
-    data={'schema':2,'name':name,'status':'awaiting_reference_review','character':'character.png',
+    data={'schema':2,'name':name,'status':'awaiting_reference_review','character':'character.png','background_mode':background_mode,
           'motion_plan':'reference/motion-plan.json','plan_sha256':guide['plan_sha256'],'actions':{}}
     for action,spec in guide['actions'].items():
         spec=dict(spec);spec['guide']='reference/'+spec['guide'];spec['reference']='reference/'+spec['reference']
+        spec['floor_y']=spec['origin'][1]
         spec['request']=f'{action}-request.txt';spec['status']='awaiting_reference_review'
-        prompt=(f'Create {spec["count"]} coherent full-body {action} key poses of {name}. '
+        width=spec['columns']*spec['tile'][0];height=spec['rows']*spec['tile'][1]
+        background=('Use a perfectly uniform solid magenta #FF00FF background, including gaps between limbs and equipment. The exporter keys this color to real alpha. ' if background_mode=='magenta' else 'Output genuine RGBA transparency. ')
+        prompt=(f'OUTPUT CANVAS: {width} x {height} pixels. '
+                f'Create {spec["count"]} coherent full-body {action} key poses of {name}. '
                 f'Reference 1 is this job\'s custom 3D mannequin guide, {spec["columns"]} columns by {spec["rows"]} rows; reference 2 is character appearance. '
                 f'Motion intent: {spec.get("description","")}. '
                 f'Character analysis: {json.dumps(plan["character_analysis"],ensure_ascii=False)}. '
@@ -250,15 +260,16 @@ def prepare_custom(character,out,motion_plan,actions,name):
                 f'Camera azimuth {guide["camera"]["azimuth"]} degrees, elevation {guide["camera"]["elevation"]} degrees; match the guide exactly. '
                 'Preserve anatomy, number of limbs, body scale, costume and equipment. The guide colors identify limbs, not costume colors. '
                 'Copy each whole-body pose in order. Keep equal cells, padding, the SAME camera framing and floor coordinate in every frame; '
+                f'cell origin {spec["origin"]}, ground y={spec["floor_y"]} in a {spec["tile"][0]} by {spec["tile"][1]} cell. '
                 'preserve jump height and falling/root displacement rather than centering or grounding each pose separately. '
-                'Use true transparent alpha, or uniform magenta only if the character does not contain magenta. No labels, grid lines, scenery or baked checkerboard. '
+                +background+'No labels, grid lines, scenery or baked checkerboard. '
                 +('Complete a seamless cycle using opposite support phases; do not duplicate the first pose at the end.' if spec['loop'] else 'Play the whole action once in sequence, ending in the last intended pose; do not loop or shrink away.')+'\n')
         spec['request_draft']=prompt+contract_module().endpoints(out,action,spec);data['actions'][action]=spec
     data['input_hashes']=fingerprints(out,data)
     write(out/'job.json',data)
     return {'job':str(out),'status':data['status'],'reference_preview':str(out/'reference/guide-review.html'),
             'requests':[],
-            'next':'Host AI: inspect this job\'s reference motion before generating character sheets. Repair the plan if its poses are wrong, then submit review-reference with observations to unlock requests.'}
+            'next':'Host AI: inspect this job\'s reference motion, submit review-reference with observations, then run generation-check with the actual provider adapter to unlock requests.'}
 
 def remove_background(image, mode):
     rgba=np.array(image.convert('RGBA'))
@@ -275,8 +286,11 @@ def remove_background(image, mode):
     if float((edge<=8).mean())<.98:raise ValueError('Cell background is not transparent around its perimeter; a token alpha pixel does not make a checkerboard transparent')
     return Image.fromarray(rgba)
 
-def extract(raw, columns, rows, count, background='auto',rectangles=None):
+def extract(raw, columns, rows, count, background='auto',rectangles=None,crop_data=None):
     if columns<1 or rows<1 or not 1<=count<=columns*rows:raise ValueError('Invalid sheet grid')
+    if crop_data is not None and crop_data.get('schema')==2:
+        clean=remove_background(raw,background)
+        return contract_module().render_cells(clean,crop_data)[0]
     frames=[]
     for i in range(count):
         x,y=i%columns,i//columns
@@ -368,7 +382,7 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     job,data=job_read(job)
     verify_job_contract(job,data)
     if data['schema'] in [2,3] and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
-    if data['schema']==3 and not draft and not data.get('generation_preflight'):raise ValueError('Generation-time canvas controls were not verified; only a diagnostic draft may be inspected')
+    if data['schema'] in [2,3] and not draft and not data.get('generation_preflight'):raise ValueError('Generation-time canvas controls were not verified; only a diagnostic draft may be inspected')
     if not draft and data.get('generation_preflight',{}).get('diagnostic_only'):raise ValueError('Diagnostic generation cannot be exported as approved game art')
     if action not in data['actions']:raise ValueError('Action was not prepared in this job')
     spec=data['actions'][action]
@@ -387,13 +401,14 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
             raise ValueError('Export grid, frame count and phases must match the pose-review contract. Prepare and review a revised job; use --draft only for diagnostics.')
     if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>1 or (p==1 and spec['loop']) for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
         raise ValueError('Phases must strictly increase from zero; only non-looping actions may include the settled endpoint one')
+    if data.get('background_mode') and background not in ['auto',data['background_mode']]:raise ValueError('Background mode must match prepared generation contract')
+    if data.get('background_mode') and background=='auto':background=data['background_mode']
+    if not draft and hold_from is not None and hold_from<count-1:raise ValueError('Final export cannot replace reviewed motion with --hold-from; author and review the held poses in the source sequence')
     raw=Image.open(image)
-    if data['schema']==3 and background not in ['auto',data['background_mode']]:raise ValueError('Background mode must match prepared generation contract')
-    if data['schema']==3 and background=='auto':background=data['background_mode']
     crop_data=None;rectangles=None
     if crop_plan is not None:crop_data,rectangles=contract_module().load_crop(crop_plan,image,columns,rows,count,require_review=not draft)
     if rectangles is not None:contract_module().validate_pixels(remove_background(raw,background),rectangles)
-    sources=extract(raw,columns,rows,count,background,rectangles)
+    sources=extract(raw,columns,rows,count,background,rectangles,crop_data)
     sequence_result=None
     if not draft:
         if observations is None:raise ValueError('Per-frame pose observations required before export. Use --draft only for isolated review, never delivery.')
@@ -401,7 +416,8 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
         report=read(observations)
         if crop_data is not None and report.get('crop_plan_sha256')!=contract_module().digest(crop_plan):raise ValueError('Pose observations and export must use the identical reviewed crop plan')
         if crop_data is None and report.get('crop_plan_sha256'):raise ValueError('Supply the same crop plan used by pose observations')
-        sequence_result=quality_module().check(job,data,action,image,report,mannequin_module(),rectangles)
+        point_offsets=contract_module().cell_layout(crop_data,raw.size)['frame_translations'] if crop_data is not None and crop_data.get('schema')==2 else None
+        sequence_result=quality_module().check(job,data,action,image,report,mannequin_module(),rectangles,point_offsets)
         if count!=len(read(observations)['frames']):raise ValueError('Cannot change reviewed frame count')
     if spec.get('alignment')=='reference_canvas':frames,anchors=align_registered(sources,tile,spec['tile'],spec['origin'])
     else:frames,anchors=align_canvas(sources,tile,height)
@@ -445,7 +461,7 @@ def parser():
     a=commands.add_parser('prepare');a.add_argument('--character',required=True);a.add_argument('--out',required=True)
     a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+');a.add_argument('--motion-plan');a.add_argument('--legacy-reference-reason')
     a.add_argument('--frame-indices',nargs='+',type=int)
-    a.add_argument('--reference-bundle');a.add_argument('--background-mode',choices=['alpha','magenta'],help='Imported reference bundles only; defaults to magenta')
+    a.add_argument('--reference-bundle');a.add_argument('--background-mode',choices=['alpha','magenta'],help='Custom plans and imported references; defaults to magenta')
     a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True)
     a.add_argument('--background',choices=['auto','alpha','magenta'],default='auto')
     a.add_argument('--observations');a.add_argument('--draft',action='store_true')

@@ -55,6 +55,18 @@ class ContractTests(unittest.TestCase):
     def test_automatic_plan_cannot_hide_pixels_in_gaps(self):
         plan={'schema':2,'method':'transparent_separators','image_size':[80,40],'grid':[2,1,2],'boxes':[[0,0,35,40],[45,0,80,40]]}
         with self.assertRaisesRegex(ValueError,'discard'):contract.boxes(plan,(80,40),2,1,2)
+    def test_moved_safe_cut_preserves_logical_character_origin(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);im=Image.new('RGBA',(80,80))
+            # A weapon extends across the nominal x=40 boundary in row one.
+            im.paste('red',(5,10,42,30));im.paste('blue',(55,10,65,30))
+            im.paste('red',(5,50,15,70));im.paste('blue',(55,50,65,70));im.save(d/'s.png')
+            plan=contract.automatic_plan(d/'s.png',im,2,2,4)
+            self.assertNotEqual(plan['boxes'][1][0],40)
+            frames,layout=contract.render_cells(im,plan)
+            self.assertEqual(frames[1].getbbox()[0]-layout['origin'][0],15)
+            self.assertEqual(frames[3].getbbox()[0]-layout['origin'][0],15)
+            self.assertEqual(frames[1].getpixel((15+layout['origin'][0],10+layout['origin'][1])),(0,0,255,255))
     def test_loop_endpoint_checks_expected_motion_not_identical_pixels(self):
         refs=[{'hip':[20,20],'hand':[30+x,30]} for x in [0,3,6,3]]
         obs=[{'frame':i,'points':copy.deepcopy(r)} for i,r in enumerate(refs)]
