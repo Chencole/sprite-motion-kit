@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import importlib.util
 import json
 import math
 from pathlib import Path
@@ -31,7 +32,7 @@ def write(path, value):
 def job_read(job):
     job=Path(job).resolve()
     data=read(job/'job.json')
-    if data.get('schema')!=1: raise ValueError('Unsupported job schema')
+    if data.get('schema') not in [1,2]: raise ValueError('Unsupported job schema')
     return job,data
 
 def request_text(action, character_name):
@@ -58,7 +59,9 @@ def request_text(action, character_name):
         'Preserve distinctive anatomy and equipment; keep all limbs and any dropped weapon inside each cell. '
         'Final frames settle into the same corpse, which stays still. This action plays once and does not loop.\n')
 
-def prepare(character, out, actions=('walk','death'), name='the supplied character'):
+def prepare(character, out, actions=None, name='the supplied character', motion_plan=None):
+    if motion_plan is not None:return prepare_custom(character,out,motion_plan,actions,name)
+    actions=actions or tuple(PRESETS)
     if not actions or any(a not in PRESETS for a in actions):raise ValueError('Choose walk and/or death')
     character=Path(character).resolve()
     if not character.is_file():raise ValueError('Character image does not exist')
@@ -80,13 +83,48 @@ def prepare(character, out, actions=('walk','death'), name='the supplied charact
     return {'job':str(out),'status':data['status'],'requests':[str(out/f'{a}-request.txt') for a in actions],
             'next':'Host AI: inspect character and guide, then generate one complete action sheet using both references.'}
 
+def mannequin_module():
+    spec=importlib.util.spec_from_file_location('sprite_mannequin',Path(__file__).with_name('mannequin.py'))
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+def prepare_custom(character,out,motion_plan,actions,name):
+    mannequin=mannequin_module();plan=read(motion_plan);mannequin.validate(plan)
+    if plan.get('design_status')!='authored':raise ValueError('Host AI must design this motion plan and set design_status to authored before character generation preparation. Render draft guides directly for inspection.')
+    if actions is not None:
+        if not actions or any(a not in plan['actions'] for a in actions):raise ValueError('Requested action is missing from the motion plan')
+        plan['actions']={a:plan['actions'][a] for a in actions}
+    character=Path(character).resolve();Image.open(character).verify();out=Path(out).resolve()
+    if out.exists() and any(out.iterdir()):raise ValueError('Use a new empty job directory; existing work is preserved')
+    out.mkdir(parents=True,exist_ok=True);Image.open(character).convert('RGBA').save(out/'character.png')
+    mannequin.render(plan,out/'reference')
+    guide=read(out/'reference/guide.json')
+    data={'schema':2,'name':name,'status':'awaiting_reference_review','character':'character.png',
+          'motion_plan':'reference/motion-plan.json','plan_sha256':guide['plan_sha256'],'actions':{}}
+    for action,spec in guide['actions'].items():
+        spec=dict(spec);spec['guide']='reference/'+spec['guide'];spec['reference']='reference/'+spec['reference']
+        spec['request']=f'{action}-request.txt';spec['status']='awaiting_reference_review'
+        prompt=(f'Create {spec["count"]} coherent full-body {action} key poses of {name}. '
+                f'Reference 1 is this job\'s custom 3D mannequin guide, {spec["columns"]} columns by {spec["rows"]} rows; reference 2 is character appearance. '
+                f'Motion intent: {spec.get("description","")}. '
+                f'Camera azimuth {guide["camera"]["azimuth"]} degrees, elevation {guide["camera"]["elevation"]} degrees; match the guide exactly. '
+                'Preserve anatomy, number of limbs, body scale, costume and equipment. The guide colors identify limbs, not costume colors. '
+                'Copy each whole-body pose in order. Keep equal cells, padding, the SAME camera framing and floor coordinate in every frame; '
+                'preserve jump height and falling/root displacement rather than centering or grounding each pose separately. '
+                'Use true transparent alpha, or uniform magenta only if the character does not contain magenta. No labels, grid lines, scenery or baked checkerboard. '
+                +('Complete a seamless cycle using opposite support phases; do not duplicate the first pose at the end.' if spec['loop'] else 'Play the whole action once in sequence, ending in the last intended pose; do not loop or shrink away.')+'\n')
+        (out/spec['request']).write_text(prompt,encoding='utf-8');data['actions'][action]=spec
+    write(out/'job.json',data)
+    return {'job':str(out),'status':data['status'],'reference_preview':str(out/'reference/guide-review.html'),
+            'requests':[str(out/s['request']) for s in data['actions'].values()],
+            'next':'Host AI: inspect this job\'s reference motion before generating character sheets. Repair the plan if its poses are wrong.'}
+
 def remove_background(image, mode):
     rgba=np.array(image.convert('RGBA'))
     if mode=='auto':
         mode='alpha' if int(rgba[:,:,3].min())<255 else 'magenta'
     if mode=='magenta':
         c=rgba[:,:,:3].astype(np.int16)
-        mask=np.minimum(c[:,:,0],c[:,:,2])-c[:,:,1]>30
+        mask=(c[:,:,0]>180)&(c[:,:,2]>170)&(c[:,:,1]<100)&(np.minimum(c[:,:,0],c[:,:,2])-c[:,:,1]>90)
         if float(mask.mean())<.01:raise ValueError('No usable transparency or magenta background. Do not import a baked checkerboard.')
         rgba[mask]=0
     elif mode!='alpha':raise ValueError('Background must be auto, alpha or magenta')
@@ -144,16 +182,32 @@ def make_preview(job, data):
         if spec.get('status')!='packed':continue
         clip=read(job/action/'clip.json')
         entries.append({'name':action,'character':data_url(job/action/'atlas.png'),
-                        'reference':data_url(job/spec['reference']),**clip})
+                        'reference':data_url(job/spec['reference']),
+                        'reference_layout':spec.get('reference_layout',{'tile':[256,320],'columns':12,'count':72}),**clip})
     encoded=json.dumps(entries,ensure_ascii=False).replace('<','\\u003c')
     template=(SKILL/'assets/review.html').read_text(encoding='utf-8')
     (job/'review.html').write_text(template.replace('__CLIPS__',encoded),encoding='utf-8')
 
+def align_registered(frames,tile,reference_tile,reference_origin):
+    """One canvas transform preserves airborne/falling motion; no per-frame fitting."""
+    tw,th=tile;rw,rh=reference_tile
+    if len(tile)!=2 or min(tile)<16:raise ValueError('Invalid tile')
+    fit=min(tw/rw,th/rh);offset=[(tw-rw*fit)/2,(th-rh*fit)/2]
+    result=[];anchors=[]
+    for i,f in enumerate(frames):
+        if abs(f.width/f.height-rw/rh)>.04:raise ValueError('Generated cell aspect differs from guide. Check grid; do not stretch the character.')
+        resized=f.resize((round(rw*fit),round(rh*fit)),Image.Resampling.NEAREST)
+        canvas=Image.new('RGBA',tile);canvas.alpha_composite(resized,tuple(round(v) for v in offset));result.append(canvas)
+        anchors.append({'translation':offset,'scale':fit,'origin':[round(reference_origin[k]*fit+offset[k]) for k in range(2)],'bounds':canvas.getbbox()})
+    return result,anchors
+
 def pack(job, action, image, background='auto', columns=None, rows=None, count=None,
-         seconds=None, phases=None, tile=(512,448), height=316, hold_from=None):
+         seconds=None, phases=None, tile=None, height=316, hold_from=None):
     job,data=job_read(job)
     if action not in data['actions']:raise ValueError('Action was not prepared in this job')
     spec=data['actions'][action]
+    if not isinstance(action,str) or not __import__('re').fullmatch(r'[a-z][a-z0-9_-]{0,63}',action):raise ValueError('Unsafe action name')
+    tile=tuple(tile or spec.get('tile',[512,448]))
     columns=columns if columns is not None else spec['columns']
     rows=rows if rows is not None else spec['rows']
     count=count if count is not None else spec['count']
@@ -165,9 +219,10 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
         raise ValueError('Phases must match frame count and strictly increase from zero to below one')
     raw=Image.open(image)
     sources=extract(raw,columns,rows,count,background)
-    frames,anchors=align(sources,action,tile,height)
+    if spec.get('alignment')=='reference_canvas':frames,anchors=align_registered(sources,tile,spec['tile'],spec['origin'])
+    else:frames,anchors=align(sources,action,tile,height)
     if hold_from is not None:
-        if action!='death' or not 0<=hold_from<count:raise ValueError('--hold-from is a valid zero-based death pose only')
+        if spec['loop'] or not 0<=hold_from<count:raise ValueError('--hold-from requires a valid zero-based pose in a non-looping action')
         for i in range(hold_from+1,count):
             frames[i]=frames[hold_from].copy()
             anchors[i]=dict(anchors[hold_from])
@@ -186,6 +241,7 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     clip={'schema':1,'action':action,'atlas':'atlas.png','tile':list(tile),'count':count,'seconds':seconds,
           'phases':phases,'loop':spec['loop'],'origin':anchors[0]['origin'],'frames':anchors,
           'hold_from':hold_from,'visual_review_passed':False,
+          'alignment':spec.get('alignment','legacy_ground_registration'),'plan_sha256':data.get('plan_sha256'),
           'source':saved_source.name,
           'source_sha256':hashlib.sha256(Path(image).read_bytes()).hexdigest()}
     write(dest/'clip.json',clip)
@@ -198,12 +254,12 @@ def parser():
     p=argparse.ArgumentParser(description=__doc__)
     commands=p.add_subparsers(dest='command',required=True)
     a=commands.add_parser('prepare');a.add_argument('--character',required=True);a.add_argument('--out',required=True)
-    a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+',choices=PRESETS,default=list(PRESETS))
-    a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',choices=PRESETS,required=True);a.add_argument('--image',required=True)
+    a.add_argument('--name',default='the supplied character');a.add_argument('--actions',nargs='+');a.add_argument('--motion-plan')
+    a=commands.add_parser('pack');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True)
     a.add_argument('--background',choices=['auto','alpha','magenta'],default='auto')
     for key in ['columns','rows','count','hold-from']:a.add_argument('--'+key,type=int)
     a.add_argument('--seconds',type=float);a.add_argument('--phases',type=lambda x:[float(v) for v in x.split(',')])
-    a.add_argument('--tile',type=lambda x:tuple(int(v) for v in x.lower().split('x')),default=(512,448));a.add_argument('--height',type=int,default=316)
+    a.add_argument('--tile',type=lambda x:tuple(int(v) for v in x.lower().split('x')));a.add_argument('--height',type=int,default=316)
     a=commands.add_parser('review');a.add_argument('--job',required=True)
     return p
 

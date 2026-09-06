@@ -1,77 +1,73 @@
 # Sprite Motion Kit
 
-**角色原图 + 完整动作参考 → AI 连续帧 → 透明图集 → 同步播放检查。**
+**用户需求 → AI 设计三维体型与动作 → 木头人参考 → AI 角色帧 → 图集与可视化检查。**
 
-A Codex plugin for authoring humanoid game-character walk and death animations. It gives the AI agent a reusable workflow, side-profile mannequin references, local extraction tools, and an offline visual reviewer.
+A Codex plugin for custom game-character animation authoring. The AI designs the anatomy and key poses for the requested action; local tools render an orthographic 3D mannequin guide, package character sprites, and open a synchronized offline reviewer.
 
-This is an early **authoring toolkit**, not an animation model. The pose guide is a visual reference rather than a hard skeleton constraint. Generated anatomy and costume consistency still require inspection.
+Actions are **not limited to walk, run, jump or death**. Multiple sword attacks, casting gestures, dodges, monster collapses and multi-arm motions use the same editable motion contract. The AI writes the plan; users do not need to manipulate joints or run commands manually.
 
-## 安装 / Install
-
-Use a Codex release with plugin marketplace support:
+## Install
 
 ```sh
 codex plugin marketplace add Chencole/sprite-motion-kit
 codex plugin add sprite-motion-kit@personal
 ```
 
-The repository catalog currently uses the name `personal`. If you already configured a catalog with that name, use a local clone and choose a distinct catalog name before adding it. The [official packaging documentation](https://developers.openai.com/plugins/build/plugins) describes repository marketplaces and installation.
+The repository catalog is named `personal`. If that name is already configured for a different repository, use a local clone with a distinct catalog name. See the [official packaging documentation](https://developers.openai.com/plugins/build/plugins).
 
-After installing, start a new Codex task and ask it to use **Sprite Motion Kit** with your character image. The agent runs the preparation, generation and export steps. It needs an available image-generation tool plus Python 3.10+, Pillow and NumPy:
+After installation, start a new Codex task and attach your character. Python 3.10+, Pillow and NumPy are required:
 
 ```sh
 python -m pip install -r plugins/sprite-motion-kit/requirements.txt
 ```
 
-The plugin itself has no subscription, login, hosted API or generation credits. Your chosen image-generation provider may have its own costs and terms.
+No Blender, external website, account or model credits are required for the local 3D reference renderer. Generating final character artwork still needs the host AI's image-generation tool, with its applicable access and costs.
 
-## 用法 / Usage
+## Ask the AI
 
-Attach a character and say:
+> 用 Sprite Motion Kit，给这个四臂角色做两种不同攻击和向侧面倒地。先按他的体型设计三维木头人动作，再照参考生成整套角色帧，保留四条手臂和每只手的武器，给我正常速度和逐帧检查。
 
-> 用 Sprite Motion Kit，让这个角色按纯侧面参考生成完整行走和倒地，保留原来的外形。先给我正常速度、慢放和逐帧检查，再决定是否导入游戏。
+The agent:
 
-The workflow:
+1. Interprets the requested body, actions, view and timing.
+2. Authors a JSON rig and whole-body key poses, including attached weapon endpoints and extra limbs as needed.
+3. Validates and renders that custom motion locally; inspects and corrects its poses.
+4. Feeds each actual pose guide and the original character to the available image tool.
+5. Checks the generated grid, transparency and continuity, exports frames/atlases, and opens the reference/character reviewer.
 
-1. Inspect the character and the requested camera direction.
-2. Prepare an isolated job with the character, guides and generation requests.
-3. The host AI generates a complete sheet for each requested action.
-4. Export transparent frames, an atlas, origins, timing metadata and a contact sheet.
-5. Open `review.html`: reference and character play together; pause, slow down, step across a walk loop, or hold the final death pose.
+The default custom-plan scaffold contains neutral keys and is marked `needs_motion_design`. The AI must author the requested action. Familiar sample motions are explicitly opt-in examples; they are not a closed action menu or a claim of finished animation quality.
 
-The included reference is **pure side view, facing right**. Walk has 8 key poses across a full two-step cycle; death has 12 poses. Both have a 72-frame reference preview. Extra poses and nonuniform timing are supported when repairing a loop. Other views, running, quadrupeds and flight need suitable additional references.
-
-## Local helper commands
-
-These are for the AI agent or contributors, not a requirement to manually operate the workflow:
+## Agent / contributor commands
 
 ```sh
-python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py prepare --character character.png --out jobs/example
-python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py pack --job jobs/example --action walk --image generated-walk.png
-python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py pack --job jobs/example --action death --image generated-death.png
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py create --body humanoid --actions overhead_cut thrust collapse --out jobs/plan.json
+# The AI edits joints, key poses, timings and descriptions, then marks the plan authored.
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py validate --plan jobs/plan.json
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/mannequin.py render --plan jobs/plan.json --out jobs/reference
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py prepare --character character.png --motion-plan jobs/plan.json --out jobs/character
+# The host image tool generates the action sheet from this job's guide and character.
+python plugins/sprite-motion-kit/skills/sprite-motion/scripts/motion.py pack --job jobs/character --action overhead_cut --image generated-cut.png
 ```
 
-Open `jobs/example/review.html`. Jobs preserve source sheets and default to `awaiting_visual_review`; a successful export does not mark the art approved. Packing does not invent missing walk poses or remove frame-to-frame costume changes.
+See the [motion contract](plugins/sprite-motion-kit/skills/sprite-motion/references/motion-contract.md) for coordinates, joint hierarchy, arbitrary action IDs, root movement, camera, timing and loop rules. Humanoid and quadruped topologies are convenient scaffolds; the JSON can define other joint trees without editing the renderer.
 
-Use real transparency where possible. A flat magenta background can be keyed, but this can remove magenta costume details; choose alpha for characters containing that color. Baked white/checkerboard backgrounds and frames touching cell edges are rejected. The tool uses one scale per action and retains a full-size prone body for death. Review the alignment before import, especially hats, unusual proportions and separate dropped weapons.
+`guide-review.html` shows the 3D reference. A packed job's `review.html` shows reference and character together with pause, slow motion, replay and stepping. Both work offline.
 
-## Structure and contributions
+## Alignment and limits
 
-```text
-.agents/plugins/marketplace.json          Repository plugin catalog
-plugins/sprite-motion-kit/                Installable plugin
-  .codex-plugin/plugin.json
-  skills/sprite-motion/SKILL.md           Agent workflow
-  skills/sprite-motion/assets/            CC0 references and review template
-  skills/sprite-motion/scripts/motion.py  Local preparation/export
-tests/                                   Offline regression tests
-docs/                                    Privacy, terms and submission notes
+Custom jobs use a fixed camera and shared canvas transform. Jump height, lunges and full-size fallen bodies survive export; frames are not independently floor-aligned or stretched. Loop endpoints must match. One-shot actions hold their final frame. The original CC0 side-view walk/death workflow remains available without `--motion-plan`.
+
+The renderer is a shaded skeletal proxy, not a physics or character-animation model. The AI must inspect support, balance, collisions and pose transitions. The image generator receives a visual guide, not guaranteed hard skeletal conditioning; it may still introduce costume or anatomical errors. Technical export never marks the art visually approved.
+
+Use true alpha for characters with bright magenta details. Baked white/checkerboard backgrounds and clipped cells are rejected. Dark purple artwork is preserved by the narrower magenta key.
+
+## Development and distribution
+
+```sh
+python -m unittest discover -s tests -v
+python scripts/package.py
 ```
 
-Run `python -m unittest discover -s tests -v`. Contributions to reference actions, alignment and review controls are welcome. Include motion provenance and a visual comparison; do not add artwork you lack permission to distribute.
+Code, procedural renderer and workflow: **MIT** (modify, redistribute, commercial use permitted). Bundled legacy references: **CC0**, derived from Quaternius' Universal Animation Library. User character artwork and generated outputs retain their own applicable rights.
 
-## Licensing and distribution
-
-Code and workflow: **MIT** — modification, redistribution and commercial use are permitted under the license. Bundled reference renders: **CC0**, derived from Quaternius' Universal Animation Library; see the included provenance and full license. User artwork and generated outputs retain their own applicable rights; the MIT license does not grant rights to third-party character designs or model services.
-
-This repository contains no private game source, game saves, character artwork, credentials or model weights. See [privacy](docs/PRIVACY.md), [terms](docs/TERMS.md) and [official directory submission notes](docs/OFFICIAL-SUBMISSION.md). **GitHub distribution is independent of OpenAI's public directory; no official listing or endorsement is claimed.**
+This repository contains no private game code, saves, character artwork, credentials or model weights. See [privacy](docs/PRIVACY.md), [terms](docs/TERMS.md) and [official directory status](docs/OFFICIAL-SUBMISSION.md). GitHub distribution is independent of OpenAI's public directory; no official listing is claimed.

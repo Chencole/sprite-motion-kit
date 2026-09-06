@@ -1,11 +1,16 @@
-# Sprite Motion Kit 0.1.0
+# Release notes
 
-Initial experimental Codex plugin release:
+## 0.2.0 — AI-authored custom motion plans
 
-- Agent workflow for generating complete side-profile walk and death sprite sheets from a character and pose reference.
-- CC0 mannequin pose guides and 72-frame reference previews.
-- Local transparent extraction, uniform action scale, frame origins, atlas and timing export.
-- Self-contained synchronized review with pause, slow motion, loop stepping and a held corpse pose.
-- MIT source license, source provenance, privacy documentation and directory submission draft.
+- Added schema-2 joint trees, root transforms, arbitrary action names, key-pose timing and configurable orthographic cameras.
+- Added a local shaded 3D mannequin renderer and offline reference player; no Blender or hosted API required.
+- The AI authors each requested motion. Scaffolds are neutral by default; familiar motion examples require an explicit flag.
+- Custom frame export preserves airborne/root movement and uses one reference canvas; legacy walk/death jobs remain supported.
+- Added configurable reference layouts to synchronized review, plan provenance hashes, and validation for rigs, timing and loop endpoints.
+- Narrowed chroma key removal to preserve dark purple character details.
 
-Requires Python 3.10+, Pillow, NumPy and the host's image-generation tool. No hosted service, model weights or generation credits included. Visual quality remains subject to inspection. This is an independent GitHub distribution, not an official OpenAI directory listing.
+Reference rendering and data checks do not guarantee naturally animated character art. Generation remains the host image tool's responsibility, with visual review before delivery.
+
+## 0.1.0
+
+Initial fixed-reference walk/death workflow, transparent export, aligned atlases and synchronized review.

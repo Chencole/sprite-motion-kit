@@ -1,12 +1,7 @@
-# Release validation
+# Validation
 
-Validated on Windows with Python 3.12, Pillow/NumPy, the installed Codex CLI and a Chromium-based preview, September 2026.
+The 0.2.0 automated suite contains 21 tests, all passing. It exercises arbitrary custom action IDs, neutral scaffolds, extra-arm topology and attached weapons, fixed segment lengths through interpolation, distinct attack trajectories, quadruped roll anatomy, invalid plans, loop seams, preserved jump height, custom render/export roundtrip and legacy export compatibility.
 
-- Ten offline regression tests passed, covering source preservation, alpha/keyed backgrounds, uneven cell dimensions, clipping rejection, uniform death scale, invalid timing, source repacking and settled-corpse export.
-- Codex plugin manifest validator passed.
-- Codex skill validator passed.
-- Repository marketplace was added locally and the plugin installed successfully with the CLI.
-- Existing AI-generated walk and death sheets were prepared and exported through the plugin with the original character. These private test inputs and outputs are excluded from distribution.
-- Browser interaction verified pause, quarter-speed selection, reverse wrap to the last walk frame, advance from last to first, and death clamping at the final corpse even after advancing again.
+The roundtrip test uses rendered mannequin images as engineering fixtures, not as claimed AI character output. Structural validation is distinct from visual approval; exported clips retain visual_review_passed=false.
 
-These checks validate packaging, export and controls. They do **not** establish that every generated character has natural gait or that the plugin is accepted by an official directory. The plugin does not contain a generation model; a fresh installation still needs the host agent's generation capability. Additional host/OS combinations and new generated artwork require their own testing.
+The local reference player is additionally inspected with authored overhead-cut, lunge and hop plans and a quadruped collapse example. This release does not claim an external image model followed every custom guide or that a new character roster was completed.

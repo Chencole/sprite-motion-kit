@@ -1,7 +1,7 @@
 {
   "name": "sprite-motion-kit",
-  "version": "0.1.0",
-  "description": "Author game-character walk and death sprites from pose references, with local atlas export and visual review.",
+  "version": "0.2.0+codex.20260906140603",
+  "description": "AI-authored custom game actions and body rigs, local 3D mannequin references, sprite export and visual review.",
   "author": {
     "name": "Chencole",
     "url": "https://github.com/Chencole"
@@ -9,22 +9,30 @@
   "repository": "https://github.com/Chencole/sprite-motion-kit",
   "homepage": "https://github.com/Chencole/sprite-motion-kit",
   "license": "MIT",
-  "keywords": ["pixel-art", "sprite-animation", "pose-reference", "game-development"],
+  "keywords": [
+    "pixel-art",
+    "sprite-animation",
+    "pose-reference",
+    "game-development"
+  ],
   "skills": "./skills/",
   "interface": {
     "displayName": "Sprite Motion Kit",
-    "shortDescription": "Create and inspect character walk and death sprite sheets.",
-    "longDescription": "Use side-profile mannequin poses and character artwork with the host AI's image-generation tool, then export transparent frames, atlases and a synchronized offline reviewer. Includes CC0 motion references; no model access or generation credits.",
+    "shortDescription": "Design custom 3D poses and generate matching sprite actions.",
+    "longDescription": "The host AI designs character-specific joint trees, attacks, locomotion and falls; local tools render 3D mannequin references, export transparent character frames and synchronize visual review. No model access or credits bundled.",
     "developerName": "Chencole",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write"],
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
     "websiteURL": "https://github.com/Chencole/sprite-motion-kit",
     "privacyPolicyURL": "https://github.com/Chencole/sprite-motion-kit/blob/main/docs/PRIVACY.md",
     "termsOfServiceURL": "https://github.com/Chencole/sprite-motion-kit/blob/main/docs/TERMS.md",
     "defaultPrompt": [
-      "Make a side-profile walking sprite sheet from this character and show the synchronized review.",
-      "Animate this character falling into a full-size corpse that stays on the final frame.",
-      "Inspect this walking loop against its pose reference and export an aligned atlas."
+      "Design two different attacks for this character using custom 3D mannequin references, then generate and review the sprites.",
+      "Create a body-appropriate monster collapse with its own rig and key poses.",
+      "Author a custom motion plan for this character and show the 3D reference before generating its animation."
     ]
   }
 }
