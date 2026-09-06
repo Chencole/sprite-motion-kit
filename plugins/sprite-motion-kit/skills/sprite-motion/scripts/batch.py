@@ -7,6 +7,8 @@ import re
 import sys
 import motion
 
+BASE_ACTIONS = ['walk', 'run', 'attack', 'death', 'jump']
+
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -16,6 +18,11 @@ def create(spec, out):
     spec = Path(spec).resolve()
     scope = motion.read(spec)
     motion.require_text(scope.get('request'), 'Record the user-requested scope')
+    mode = scope.setdefault('scope_mode', 'full_character')
+    if mode not in ['full_character', 'action_study']:
+        raise ValueError('Scope mode must be full_character or action_study')
+    if mode == 'action_study':
+        motion.require_text(scope.get('study_reason'), 'A user-requested single-action study needs an explicit reason; it is not a complete character')
     characters = scope.get('characters')
     if not isinstance(characters, dict) or not characters:
         raise ValueError('Explicit character/action coverage is required')
@@ -26,6 +33,8 @@ def create(spec, out):
             raise ValueError('Each character needs distinct required actions')
         if any(not isinstance(a, str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', a) for a in actions):
             raise ValueError('Invalid action ID')
+        if mode == 'full_character':
+            entry['required_actions'] = list(dict.fromkeys(BASE_ACTIONS + actions))
         character = (spec.parent / entry['character']).resolve()
         entry['character'] = str(character)
         entry['character_sha256'] = digest(character)
@@ -43,7 +52,12 @@ def load(batch):
     data = motion.read(root / 'batch.json')
     if data.get('schema') != 1 or digest(root / 'scope.json') != data.get('scope_sha256'):
         raise ValueError('Scope changed; create an explicit revised batch instead of dropping requirements')
-    return root, data, motion.read(root / 'scope.json')
+    scope = motion.read(root / 'scope.json')
+    if scope.get('scope_mode', 'full_character') == 'full_character':
+        for entry in scope['characters'].values():
+            if not set(BASE_ACTIONS).issubset(entry['required_actions']):
+                raise ValueError('Full character scope needs walk, run, attack, death and jump. Create a revised batch; additional actions cannot replace these five.')
+    return root, data, scope
 
 
 def attach(batch, character, job):
@@ -132,7 +146,7 @@ def status(batch):
                     item.update(state='incomplete', reason=str(exc))
             entries.append(item)
     ready = sum(e['state'] == 'reviewed' for e in entries)
-    return {'complete': ready == len(entries), 'reviewed': ready, 'required': len(entries), 'actions': entries}
+    return {'complete': ready == len(entries), 'scope_mode': scope.get('scope_mode','full_character'), 'reviewed': ready, 'required': len(entries), 'actions': entries}
 
 
 def finish(batch):

@@ -2,7 +2,9 @@
 
 Extract the user's entire requested character/action scope before preparing individual jobs. Do not convert “fix the death animation” during an existing full-character replacement into a death-only replacement scope. Preserve earlier required actions unless the user changes the scope. This manifest tracks delivery coverage separately from per-action pose design.
 
-For an unspecified complete ordinary humanoid action set, start with at least five action families: walk, run, attack, death and jump. Expand these from the user's needs (multiple attacks, casting, hit reactions, climbing, and so on). These are a coverage baseline, not a fixed action enum or a universal anatomical requirement. A specifically requested single-action repair stays single-action; a flying or otherwise non-humanoid creature needs appropriate substitutions explained in its scope. Never silently drop an explicitly requested family. A diagnostic walk-only job remains partial when the enclosing scope requires all five; even a visually accepted walk cannot complete that set.
+The default `scope_mode` is `full_character`. The tool automatically includes walk, run, attack, death and jump for every character, preserving additional requested actions. Extras cannot substitute for those five. Author their motion for the actual body. A diagnostic walk job remains partial within this full scope even after it is visually accepted.
+
+Only an explicitly user-requested isolated study may use `scope_mode: action_study` and a nonempty `study_reason`. That scope reports its study status separately and cannot be presented as a complete character. Do not switch an existing full-character request into study mode just because other actions are unfinished. Existing scopes lacking the five-action baseline must be migrated into a new batch; preserve the old one as history.
 
 Create a JSON specification (paths relative to this file):
 
@@ -12,7 +14,7 @@ Create a JSON specification (paths relative to this file):
   "characters": {
     "armored_guard": {
       "character": "guard.png",
-      "required_actions": ["walk", "run", "thrust", "overhead_cut", "death"]
+      "required_actions": ["walk", "run", "attack", "death", "jump", "thrust", "overhead_cut"]
     }
   }
 }

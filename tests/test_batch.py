@@ -25,7 +25,7 @@ class BatchTests(unittest.TestCase):
         Image.new('RGBA', (24,40), 'blue').save(self.character)
         self.spec = self.root / 'scope.json'
         motion.write(self.spec, {'request':'Walk, run, two attacks and death for the knight', 'characters':{
-            'knight': {'character':'character.png','required_actions':['walk','run','thrust','overhead_cut','death']}}})
+            'knight': {'character':'character.png','required_actions':['walk','run','attack','death','jump','thrust','overhead_cut']}}})
         self.batch = self.root / 'batch'; batch.create(self.spec, self.batch)
 
     def job(self, actions):
@@ -61,7 +61,7 @@ class BatchTests(unittest.TestCase):
     def test_death_only_cannot_finish(self):
         self.job(['death']); self.approve('death')
         state=batch.status(self.batch)
-        self.assertEqual(state['reviewed'],1); self.assertEqual(state['required'],5)
+        self.assertEqual(state['reviewed'],1); self.assertEqual(state['required'],7)
         with self.assertRaisesRegex(ValueError,'run: missing_job'): batch.finish(self.batch)
 
     def test_draft_cannot_be_accepted_as_completed_art(self):
@@ -73,11 +73,11 @@ class BatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Draft'):batch.review(self.batch,'knight','walk',report)
 
     def test_all_packed_still_requires_visual_review(self):
-        self.job(['walk','run','thrust','overhead_cut','death'])
+        self.job(['walk','run','attack','death','jump','thrust','overhead_cut'])
         with self.assertRaisesRegex(ValueError,'awaiting_visual_review'): batch.finish(self.batch)
 
     def test_all_reviewed_then_modified_atlas_invalidates(self):
-        actions=['walk','run','thrust','overhead_cut','death']; job=self.job(actions)
+        actions=['walk','run','attack','death','jump','thrust','overhead_cut']; job=self.job(actions)
         for action in actions:self.approve(action)
         self.assertTrue(batch.finish(self.batch)['complete'])
         Image.new('RGBA',(20,20),'red').save(job/'run/atlas.png')
@@ -101,9 +101,28 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(item['state'],'incomplete')
 
     def test_partial_jobs_combine_without_dropping_actions(self):
-        self.job(['walk','run']); self.job(['thrust','overhead_cut','death'])
-        for a in ['walk','run','thrust','overhead_cut','death']:self.approve(a)
+        self.job(['walk','run']); self.job(['attack','death','jump','thrust','overhead_cut'])
+        for a in ['walk','run','attack','death','jump','thrust','overhead_cut']:self.approve(a)
         self.assertTrue(batch.finish(self.batch)['complete'])
+
+    def test_full_character_inserts_five_basics_and_preserves_extras(self):
+        motion.write(self.spec, {'request':'Full character plus fire magic','characters':{
+            'knight':{'character':'character.png','required_actions':['cast_fire']}}})
+        state=batch.create(self.spec,self.root/'full-extra')
+        self.assertEqual([a['action'] for a in state['actions']],batch.BASE_ACTIONS+['cast_fire'])
+        self.assertEqual(state['required'],6)
+        with self.assertRaisesRegex(ValueError,'jump: missing_job'):batch.finish(self.root/'full-extra')
+
+    def test_single_study_is_explicit_and_cannot_claim_full_character(self):
+        motion.write(self.spec, {'request':'Only inspect jump','scope_mode':'action_study','study_reason':'User requested jump-only diagnostic',
+            'characters':{'knight':{'character':'character.png','required_actions':['jump']}}})
+        state=batch.create(self.spec,self.root/'study')
+        self.assertEqual(state['scope_mode'],'action_study');self.assertEqual(state['required'],1)
+
+    def test_study_without_reason_cannot_silently_drop_full_scope(self):
+        motion.write(self.spec, {'request':'Complete character','scope_mode':'action_study',
+            'characters':{'knight':{'character':'character.png','required_actions':['walk']}}})
+        with self.assertRaisesRegex(ValueError,'explicit reason'):batch.create(self.spec,self.root/'invalid-study')
 
 
 if __name__=='__main__':unittest.main()
