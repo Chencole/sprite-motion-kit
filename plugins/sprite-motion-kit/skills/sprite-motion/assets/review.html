@@ -5,7 +5,8 @@ const clips=__CLIPS__;
 for(const c of clips){
  const card=document.createElement('section');card.className='card';document.querySelector('#clips').append(card);
  card.innerHTML='<h2></h2><div class="pair"><div><div class="label">参考 / Reference</div><canvas class="ref"></canvas></div><div><div class="label">角色 / Character</div><canvas class="art"></canvas></div></div><div class="controls"><button data-b="play">暂停 / Pause</button><button data-b="prev">←</button><button data-b="next">→</button><button data-b="restart">重播 / Replay</button><select aria-label="Playback speed"><option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select><output></output></div>';
- card.querySelector('h2').textContent=({walk:'行走 / Walk',death:'倒地 / Death',jump:'跳跃 / Jump',run:'奔跑 / Run'})[c.name]||c.name;
+ card.querySelector('h2').textContent=({walk:'行走 / Walk',death:'倒地 / Death',jump:'跳跃 / Jump',run:'奔跑 / Run',attack:'攻击 / Attack'})[c.name]||c.name;
+ for(const warning of c.warnings||[]){const p=document.createElement('p');p.textContent=warning;p.style.cssText='padding:0 16px;color:#ffcc87';card.querySelector('h2').after(p)}
  if(c.draft||!c.sequence_check){const note=document.createElement('p');note.textContent='草稿：未通过逐帧姿势验收，不可批量替换 / Draft: not approved';note.style.cssText='padding:0 16px;color:#ffcc87';card.querySelector('h2').after(note)}
  const art=card.querySelector('.art'),ref=card.querySelector('.ref'),ctx=art.getContext('2d'),rx=ref.getContext('2d'),im=new Image(),ri=new Image(),[w,h]=c.tile;
  art.width=ref.width=w;art.height=ref.height=h;im.src=c.character;ri.src=c.reference;

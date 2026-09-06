@@ -40,6 +40,19 @@ class BundleTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'no structured'):motion.generation_check(d/'job',d/'adapter.json')
             self.assertEqual(before,(d/'job/job.json').read_bytes())
             self.assertFalse(list((d/'job').glob('*-request.txt')))
+    def test_diagnostic_preview_preserves_source_pixels_and_never_accepts_job(self):
+        import source_preview
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);data=self.ready(d);before=(d/'job/job.json').read_bytes()
+            sheet=Image.new('RGB',(128,128),'magenta')
+            for i in range(8):sheet.paste('brown',(i%4*32+8,i//4*64+16,i%4*32+24,i//4*64+45))
+            sheet.save(d/'sheet.png');motion.write(d/'inputs.json',{a:str(d/'sheet.png') for a in data['actions']})
+            source_preview.preview(d/'job',d/'inputs.json',d/'diagnostic')
+            self.assertEqual(before,(d/'job/job.json').read_bytes())
+            report=motion.read(d/'diagnostic/diagnostics.json');self.assertEqual(len(report['actions']),5)
+            self.assertTrue(all(not a['accepted'] and a['warnings'] for a in report['actions']))
+            with Image.open(d/'diagnostic/walk-diagnostic.png') as atlas:
+                self.assertEqual(atlas.size,(256,64));self.assertEqual(atlas.getpixel((8,16)),(165,42,42,255));self.assertEqual(atlas.getpixel((0,0))[3],0)
     def test_provider_controls_are_real_arguments_for_all_five(self):
         with tempfile.TemporaryDirectory() as t:
             d=Path(t);self.ready(d)
