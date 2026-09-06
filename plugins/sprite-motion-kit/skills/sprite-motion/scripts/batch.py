@@ -81,6 +81,7 @@ def attach(batch, character, job):
 def evidence(job, character_hash, action):
     job, jd = motion.job_read(job)
     motion.verify_job_contract(job, jd)
+    if jd.get('generation_preflight',{}).get('diagnostic_only'):raise ValueError('Diagnostic generation is not an approved replacement batch')
     if digest(job / jd['character']) != character_hash:
         raise ValueError('Character image changed')
     if jd['schema'] in [2,3] and not jd.get('reference_review'):

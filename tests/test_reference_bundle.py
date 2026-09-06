@@ -61,6 +61,15 @@ class BundleTests(unittest.TestCase):
             for p in result['packets']:
                 r=motion.read(p);self.assertEqual(r['tool_arguments'],{'size':'128x64'});self.assertFalse(r['automatic_retry'])
                 self.assertEqual(r['grid'],[4,2]);self.assertEqual(r['cell_ground_y'],28)
+    def test_explicit_diagnostic_generation_is_allowed_but_never_approved_export(self):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t);self.ready(d)
+            motion.write(d/'adapter.json',{'name':'prompt only','evidence':'Fixture schema lacks size','parameters':['prompt']})
+            result=motion.generation_check(d/'job',d/'adapter.json',diagnostic=True)
+            self.assertEqual(len(result['packets']),5)
+            for p in result['packets']:
+                packet=motion.read(p);self.assertTrue(packet['diagnostic_only']);self.assertEqual(packet['tool_arguments'],{});self.assertEqual(len(packet['references']),3)
+            with self.assertRaisesRegex(ValueError,'Diagnostic generation'):motion.pack(d/'job','walk',d/'unused.png')
     def test_prompt_cannot_masquerade_as_canvas_parameter(self):
         with tempfile.TemporaryDirectory() as t:
             d=Path(t);self.ready(d)

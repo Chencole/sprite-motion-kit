@@ -70,3 +70,8 @@ constant landmark offsets for differing body proportions. Changing frame
 translations are rejected; output packing uses a single canvas transform.
 This is a diagnostic constraint, not automatic anatomy recognition or a promise
 that all generated poses will be natural.
+
+
+### Explicit diagnostic sample
+
+When the user explicitly requests a single-character preview despite unavailable structured canvas controls, `generation-check --diagnostic` creates diagnostic-only packets with no invented API arguments. This does not relax final export or batch acceptance. Show all requested actions and actual source/crop defects; do not retry automatically or replace game assets. The default production preflight still rejects prompt-only adapters.

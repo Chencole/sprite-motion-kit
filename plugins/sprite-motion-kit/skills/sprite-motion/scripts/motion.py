@@ -191,7 +191,7 @@ def review_reference(job,report):
     return {'status':data['status'],'requests':[] if data['schema']==3 else [str(job/s['request']) for s in data['actions'].values()],
             'notice':'Review records agent observations; it does not automatically certify animation quality.'}
 
-def generation_check(job,adapter):
+def generation_check(job,adapter,diagnostic=False):
     """Fail before a provider call when output size exists only in prompt prose."""
     job,data=job_read(job);verify_job_contract(job,data)
     if data['schema']!=3:raise ValueError('Generation preflight requires an imported reference bundle')
@@ -203,25 +203,26 @@ def generation_check(job,adapter):
     if binding.get('kind')=='width_height':
         keys=[binding.get('width'),binding.get('height')]
     elif binding.get('kind')=='size_string':keys=[binding.get('parameter')]
+    elif diagnostic:keys=[]
     else:raise ValueError('Generation blocked before submission: tool has no structured canvas-size control. Prompt wording is not a hard size setting. Do not retry generation.')
     if any(not isinstance(k,str) or k not in params or k in ['prompt','text','instructions'] for k in keys) or len(set(keys))!=len(keys):raise ValueError('Canvas binding must use actual dedicated tool parameters, not prompt text')
     packets={}
     for action,s in data['actions'].items():
         w=s['columns']*s['tile'][0];h=s['rows']*s['tile'][1]
-        if [w,h] not in provider.get('supported_sizes',[]):raise ValueError(f'Generation blocked: provider has no confirmed support for {w}x{h}; choose compatible reference dimensions before preparing a new job')
-        controls={keys[0]:w,keys[1]:h} if len(keys)==2 else {keys[0]:f'{w}x{h}'}
+        if [w,h] not in provider.get('supported_sizes',[]) and not diagnostic:raise ValueError(f'Generation blocked: provider has no confirmed support for {w}x{h}; choose compatible reference dimensions before preparing a new job')
+        controls=({keys[0]:w,keys[1]:h} if len(keys)==2 else {keys[0]:f'{w}x{h}'}) if keys and [w,h] in provider.get('supported_sizes',[]) else {}
         if 'request_draft' not in s:raise ValueError('Prepare a new job to add generation-time controls; old unlocked requests cannot be retroactively certified')
         packets[action]={'schema':1,'action':action,'provider':provider['name'],'tool_arguments':controls,'prompt':s['request_draft'],
           'references':[str(job/s['guide']),str(job/data['character'])]+([str(job/s['endpoint_reference'])] if s.get('endpoint_reference') else []),'input_hashes':data['input_hashes'],
           'endpoints':s.get('endpoints'),
           'canvas':[w,h],'grid':[s['columns'],s['rows']],'cell_origin':s['origin'],'cell_ground_y':s['floor_y'],
-          'background_mode':data['background_mode'],'automatic_retry':False,
+          'background_mode':data['background_mode'],'automatic_retry':False,'diagnostic_only':diagnostic,
           'limitation':'Dedicated size controls constrain canvas only. Pose, grid contents and equipment continuity remain model outputs, not hard skeletal bindings.'}
     # Validate every action first: rejection above leaves job and output untouched.
     for action,packet in packets.items():
         s=data['actions'][action];write(job/(action+'-generation.json'),packet)
         (job/s['request']).write_text(s['request_draft'],encoding='utf-8');s['status']='awaiting_generation'
-    data['generation_preflight']={'adapter':provider,'input_hashes':data['input_hashes']};data['status']='ready_for_generation';write(job/'job.json',data)
+    data['generation_preflight']={'adapter':provider,'input_hashes':data['input_hashes'],'diagnostic_only':diagnostic};data['status']='ready_for_diagnostic_generation' if diagnostic else 'ready_for_generation';write(job/'job.json',data)
     return {'status':data['status'],'packets':[str(job/(a+'-generation.json')) for a in packets],'notice':'Pass tool_arguments as actual provider arguments; never silently move them into prose or retry rejected output.'}
 
 def prepare_custom(character,out,motion_plan,actions,name):
@@ -364,6 +365,7 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     verify_job_contract(job,data)
     if data['schema'] in [2,3] and not data.get('reference_review'):raise ValueError('Reference motion has not been reviewed; run review-reference before export')
     if data['schema']==3 and not draft and not data.get('generation_preflight'):raise ValueError('Generation-time canvas controls were not verified; only a diagnostic draft may be inspected')
+    if not draft and data.get('generation_preflight',{}).get('diagnostic_only'):raise ValueError('Diagnostic generation cannot be exported as approved game art')
     if action not in data['actions']:raise ValueError('Action was not prepared in this job')
     spec=data['actions'][action]
     if not isinstance(action,str) or not __import__('re').fullmatch(r'[a-z][a-z0-9_-]{0,63}',action):raise ValueError('Unsafe action name')
@@ -448,6 +450,7 @@ def parser():
     a.add_argument('--tile',type=lambda x:tuple(int(v) for v in x.lower().split('x')));a.add_argument('--height',type=int,default=316)
     a=commands.add_parser('review-reference');a.add_argument('--job',required=True);a.add_argument('--report',required=True)
     a=commands.add_parser('generation-check');a.add_argument('--job',required=True);a.add_argument('--adapter',required=True)
+    a.add_argument('--diagnostic',action='store_true',help='Explicitly requested single-character test only; never production approval')
     a=commands.add_parser('pose-template');a.add_argument('--job',required=True);a.add_argument('--action',required=True);a.add_argument('--image',required=True);a.add_argument('--out',required=True)
     a.add_argument('--crop-plan')
     a=commands.add_parser('crop-template');a.add_argument('--image',required=True);a.add_argument('--out',required=True)
