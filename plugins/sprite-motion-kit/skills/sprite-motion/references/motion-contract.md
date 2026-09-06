@@ -49,6 +49,8 @@ Keys start at zero, end at `seconds`, and strictly increase. A looping action ne
 
 ## Agent's authoring responsibilities
 
+Before choosing key poses, describe the character-specific motion intent in each action's `description`: apparent weight, supporting limbs, balance/centre-of-mass shift, equipment constraints and the desired end state. For a large creature's death, reason about the sequence of lost support, any bracing, the fall direction, ground contact and settling of secondary parts. For walking, reason about footfall order, stride, stance width and the return into the next step. Express those decisions through joint/root keys and timings; changing an action label alone is not a variant. Examples such as a giant's braced collapse or a nimble humanoid's lighter stride are not mandatory templates. The AI chooses a suitable motion for the request, while reusing approved motion when appropriate.
+
 1. Translate the request into named actions and descriptions, anatomy, attached objects, view and timing.
 2. Author whole-body key poses. Distinguish support and swing feet; keep weapons attached. Creature mass, extra limbs and silhouette influence action design, not just its label. Different fall directions need different root rotations and folding.
 3. Validate, render and inspect. Rendering is deterministic and needs no model credits. It does not simulate balance, collisions, muscles or foot IK; check penetration, intersections, support and transitions and correct the plan.

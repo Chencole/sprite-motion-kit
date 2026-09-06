@@ -11,6 +11,10 @@ Python 3.10+, Pillow and NumPy are required. Paths below are relative to this sk
 
 ## Default workflow: request to custom motion to character
 
+Before posing, the AI must reason about this character's anatomy, apparent mass, balance, mobility, equipment and personality. Record that reasoning briefly in each action's description and turn it into actual keys. Walking and falling are families of motions, not universal clips: a nimble humanoid may have a lighter stride, an armored giant a wider weight transfer, and a heavy creature may buckle, brace, tip onto its flank and settle its tail. Decide which supports fail first and where the body ends up. Keep a full-size settled body for death. These are examples, not prescribed outcomes; infer suitable motions from the user's character and request.
+
+Variations are authored by the AI, not randomly supplied by the renderer. Different characters or requested variants may have different strides, timing and falls; preserve an already approved design unless a change is requested or anatomy requires adaptation. Never call a walk smooth merely because the renderer interpolates it: inspect alternating support, foot contact, weight transfer and the loop seam before applying the character art.
+
 1. Inspect the character and interpret the requested actions. Preserve its style, proportions, limbs, weapons and requested direction. Derive action names and frame counts from the request; multiple attacks can coexist. Ask only when a material choice cannot be inferred.
 2. Read [the motion contract](references/motion-contract.md). Author schema-2 JSON: joint hierarchy, local rotations, root transforms, key times, camera and loop behavior. The AI designs whole-body poses, including anticipation, release/contact, follow-through and recovery as appropriate. Add joints for extra arms, wings, tails and weapon endpoints. Humanoid/quadruped scaffolds are starting topologies, not body restrictions.
 
