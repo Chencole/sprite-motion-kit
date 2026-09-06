@@ -375,12 +375,12 @@ def pack(job, action, image, background='auto', columns=None, rows=None, count=N
     seconds=seconds if seconds is not None else spec['seconds']
     if not math.isfinite(seconds) or seconds<=0:raise ValueError('Duration must be positive and finite')
     phases=phases if phases is not None else spec.get('phases',[i/count for i in range(count)])
-    if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>1 or (p==1 and spec['loop']) for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
-        raise ValueError('Phases must strictly increase from zero; only non-looping actions may include the settled endpoint one')
     if not draft:
         expected_phases=spec.get('phases',[i/spec['count'] for i in range(spec['count'])])
         if (columns,rows,count)!=(spec['columns'],spec['rows'],spec['count']) or list(phases)!=list(expected_phases):
             raise ValueError('Export grid, frame count and phases must match the pose-review contract. Prepare and review a revised job; use --draft only for diagnostics.')
+    if len(phases)!=count or phases[0]!=0 or any(not math.isfinite(p) or p<0 or p>1 or (p==1 and spec['loop']) for p in phases) or any(a>=b for a,b in zip(phases,phases[1:])):
+        raise ValueError('Phases must strictly increase from zero; only non-looping actions may include the settled endpoint one')
     raw=Image.open(image)
     if data['schema']==3 and background not in ['auto',data['background_mode']]:raise ValueError('Background mode must match prepared generation contract')
     if data['schema']==3 and background=='auto':background=data['background_mode']
