@@ -1,0 +1,19 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sprite Motion Kit · Review</title><style>
+*{box-sizing:border-box}body{background:#17242c;color:#e2ecf0;font:16px system-ui,sans-serif;margin:0}main{max-width:1100px;padding:24px;margin:auto}h1{font-size:26px}p{color:#b1c3cc}.card{border:1px solid #526978;border-radius:12px;background:#26343e;margin:20px 0;overflow:hidden}h2{padding:16px;margin:0;font-size:18px}.pair{display:grid;grid-template-columns:1fr 1fr}.label{text-align:center;color:#b1c3cc}canvas{width:100%;height:auto;display:block}.controls{display:flex;flex-wrap:wrap;gap:8px;padding:14px;background:#20313c}button,select{padding:10px;border:1px solid #69848d;border-radius:6px;background:#354b56;color:white;font:inherit;cursor:pointer}output{margin-left:auto}footer{line-height:1.6;color:#b1c3cc}
+</style><main><h1>Sprite Motion Kit</h1><p>动作参考与角色同步播放 · Reference / generated character</p><div id="clips"></div><footer>暂停检查左右换腿、落脚和首尾接续。死亡停在尸体末帧。导出完成不代表美术验收通过。<br>Pause to inspect feet, body motion and the loop seam. Death holds its final pose. Export is not visual approval.</footer></main><script>
+const clips=__CLIPS__;
+for(const c of clips){
+ const card=document.createElement('section');card.className='card';document.querySelector('#clips').append(card);
+ card.innerHTML='<h2></h2><div class="pair"><div><div class="label">参考 / Reference</div><canvas class="ref"></canvas></div><div><div class="label">角色 / Character</div><canvas class="art"></canvas></div></div><div class="controls"><button data-b="play">暂停 / Pause</button><button data-b="prev">←</button><button data-b="next">→</button><button data-b="restart">重播 / Replay</button><select aria-label="Playback speed"><option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option></select><output></output></div>';
+ card.querySelector('h2').textContent=c.name==='walk'?'行走 / Walk':'倒地 / Death';
+ const art=card.querySelector('.art'),ref=card.querySelector('.ref'),ctx=art.getContext('2d'),rx=ref.getContext('2d'),im=new Image(),ri=new Image(),[w,h]=c.tile;
+ art.width=ref.width=w;art.height=ref.height=h;im.src=c.character;ri.src=c.reference;
+ let time=0,playing=true,rate=1,last=performance.now();
+ const index=()=>{let j=0;for(let i=1;i<c.count;i++)if(c.phases[i]<=time/c.seconds+1e-8)j=i;return j};
+ function draw(){let j=index(),k=Math.min(71,Math.floor(time/c.seconds*72));ctx.fillStyle=rx.fillStyle='#26343e';ctx.fillRect(0,0,w,h);rx.fillRect(0,0,w,h);ctx.imageSmoothingEnabled=false;if(im.complete&&im.naturalWidth)ctx.drawImage(im,j*w,0,w,h,0,0,w,h);if(ri.complete&&ri.naturalWidth){const rw=h*.8;rx.drawImage(ri,(k%12)*256,Math.floor(k/12)*320,256,320,(w-rw)/2,0,rw,h)}card.querySelector('output').textContent=`${j+1} / ${c.count}`;card.querySelector('[data-b="play"]').textContent=playing?'暂停 / Pause':'播放 / Play'}
+ card.querySelector('[data-b="play"]').onclick=()=>{playing=!playing;if(!c.loop&&time>=c.seconds&&playing)time=0;draw()};
+ for(const [b,d] of [['prev',-1],['next',1]])card.querySelector(`[data-b="${b}"]`).onclick=()=>{playing=false;let j=index()+d;j=c.loop?(j+c.count)%c.count:Math.max(0,Math.min(c.count-1,j));time=c.phases[j]*c.seconds;draw()};
+ card.querySelector('[data-b="restart"]').onclick=()=>{time=0;playing=true;draw()};card.querySelector('select').onchange=e=>{rate=Number(e.target.value)};
+ function tick(now){if(playing){time+=(now-last)/1000*rate;if(c.loop)time%=c.seconds;else if(time>=c.seconds){time=c.seconds;playing=false}}last=now;draw();requestAnimationFrame(tick)}requestAnimationFrame(tick)
+}
+</script></html>

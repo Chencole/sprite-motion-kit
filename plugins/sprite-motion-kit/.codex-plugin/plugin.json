@@ -1,0 +1,30 @@
+{
+  "name": "sprite-motion-kit",
+  "version": "0.1.0",
+  "description": "Author game-character walk and death sprites from pose references, with local atlas export and visual review.",
+  "author": {
+    "name": "Chencole",
+    "url": "https://github.com/Chencole"
+  },
+  "repository": "https://github.com/Chencole/sprite-motion-kit",
+  "homepage": "https://github.com/Chencole/sprite-motion-kit",
+  "license": "MIT",
+  "keywords": ["pixel-art", "sprite-animation", "pose-reference", "game-development"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Sprite Motion Kit",
+    "shortDescription": "Create and inspect character walk and death sprite sheets.",
+    "longDescription": "Use side-profile mannequin poses and character artwork with the host AI's image-generation tool, then export transparent frames, atlases and a synchronized offline reviewer. Includes CC0 motion references; no model access or generation credits.",
+    "developerName": "Chencole",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"],
+    "websiteURL": "https://github.com/Chencole/sprite-motion-kit",
+    "privacyPolicyURL": "https://github.com/Chencole/sprite-motion-kit/blob/main/docs/PRIVACY.md",
+    "termsOfServiceURL": "https://github.com/Chencole/sprite-motion-kit/blob/main/docs/TERMS.md",
+    "defaultPrompt": [
+      "Make a side-profile walking sprite sheet from this character and show the synchronized review.",
+      "Animate this character falling into a full-size corpse that stays on the final frame.",
+      "Inspect this walking loop against its pose reference and export an aligned atlas."
+    ]
+  }
+}
