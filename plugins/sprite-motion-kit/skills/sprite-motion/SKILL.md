@@ -73,3 +73,5 @@ Variations are authored by the AI, not randomly supplied by the renderer. Differ
 - If image generation is unavailable, reference rendering and export still work locally. Report the missing capability without inventing success or purchasing services.
 
 Procedural renderer/code: MIT. Bundled legacy renders: Quaternius CC0; see [sources](references/sources.md). Supplied character art retains its own rights.
+
+- Safe cutting and motion registration are separate. When the source rows have different ground baselines, supply `source_preview.py --registration ROWS.json` with source-bound crop boxes and one actually inspected ground-contact point per row for every action. The plugin applies one vertical translation to the entire row and pads a shared canvas. Never infer ground from an airborne pose or independently pin every frame to the floor. Preserve jump height and within-row body motion. Missing or stale contact evidence is rejected. Row correction is a diagnostic transform and must be recorded; it does not approve poses or authorize bulk replacement.
