@@ -92,6 +92,31 @@ already submitted cannot be made cheaper by changing its local request file.
    has an opaque background; request solid green/magenta and explicitly key it
    locally. Arbitrary scenery is not automatically made transparent.
 
+## Frame the entire action before spending video quota
+
+Match the actual character reference aspect ratio to the selected video's
+documented ratio. A square reference inside a landscape result can produce black
+sidebars or distortion. Do not treat resolution as model quality or usable action
+space, and do not enable paid image expansion to hide a framing mismatch.
+
+For the current side-view sword-character trial, a useful starting composition
+is a standing head-to-foot height around 50% of the canvas, feet around 85% down,
+and the body near horizontal center. This leaves space above the head for a raised
+blade and to both sides for a thrust, backswing and cape. These are initial layout
+targets, not universal constraints: inspect the longest weapon, wings, limb reach,
+jump height, displacement and requested action envelope before choosing margins.
+All extrema need clear padding. Larger pixel dimensions alone do not prevent
+clipping when the character still fills the frame.
+
+Inspect the downloaded reference's actual dimensions, full-body placement and
+weapon margins before a paid video call. If it is too tightly framed, prepare a
+correctly composed reference within the user's generation authorization first.
+Ask the video model to preserve that fixed camera, scale, ground plane and full
+action envelope. This is reference guidance, not a guaranteed pose constraint.
+An already clipped video cannot be repaired by cropping or padding; preserve it
+as a failed/draft example instead of cutting away the faulty attack phase. Do not
+automatically submit another paid attempt merely to apply this preset.
+
 ## Endpoint roles and limits
 
 The current Seedance 2 standard/Fast adapters send image roles as `reference_image`.

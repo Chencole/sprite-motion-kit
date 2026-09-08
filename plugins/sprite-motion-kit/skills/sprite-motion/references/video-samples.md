@@ -68,6 +68,26 @@ the same fixed threshold. This must not silently erase matching clothes or eyes;
 default `edge-connected` preserves isolated internal colors. The review records
 the chosen scope and includes a local copy of the unmodified source video.
 
+### Generated video with black sidebars
+
+Some providers place the square reference inside a wide canvas with black
+pillarboxes. Inspect the actual borders across the whole clip. Do not crop down
+to the green region: a sword or limb may extend into the black area. For confirmed
+fixed sidebars, `--black-sidebars LEFT RIGHT` gives their exact widths in source
+pixels. The tool removes edge-connected near-black pixels only inside those
+columns, keeps the same canvas, and records these widths. Nonblack extensions
+and enclosed dark detail remain. This is not arbitrary background segmentation;
+dark outlines merging into a black sidebar may be ambiguous and need visual review.
+Leave this option off for videos without those borders.
+
+Source clipping is still an error. A sword already outside the video cannot be
+recovered by extraction. When showing the failure for review, `--draft` explicitly
+allows edge-touching frames and records their original indices. It labels the
+output `video_draft_sample`, displays a diagnostic banner and cannot pass batch
+acceptance. Keep anticipation and all faulty frames in the diagnostic interval;
+do not hide them by trimming the action. Empty frames and invalid backgrounds
+remain errors even in draft mode.
+
 ## Include video actions in a complete character
 
 Create the coverage batch first. Add `--batch BATCH --batch-character CHARACTER_ID`

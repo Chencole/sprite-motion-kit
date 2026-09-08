@@ -101,8 +101,21 @@ def _edge_connected(mask):
     return visited
 
 
-def _remove_background(image, mode, key_scope='edge-connected'):
+def _remove_background(image, mode, key_scope='edge-connected', black_sidebars=None):
     rgba = np.array(image.convert('RGBA'))
+    if black_sidebars is not None:
+        if (len(black_sidebars) != 2 or any(type(v) is not int or v < 0 for v in black_sidebars)
+                or sum(black_sidebars) <= 0 or sum(black_sidebars) >= image.width or mode == 'alpha'):
+            raise ValueError('Black sidebars require two fixed widths leaving a keyed center region')
+        left, right = black_sidebars
+        region = np.zeros(rgba.shape[:2], dtype=bool)
+        region[:, :left] = True
+        if right:
+            region[:, -right:] = True
+        # Only inspected fixed sidebars, never dark armor in the center. Keep
+        # nonblack foreground extending into the bars on the original canvas.
+        near_black = (rgba[:, :, :3].max(axis=2) <= 24) & region
+        rgba[_edge_connected(near_black)] = 0
     if mode != 'alpha':
         rgb = rgba[:, :, :3].astype(np.int16)
         # Fixed thresholds for the whole clip: no per-frame fitting, erosion or
@@ -127,7 +140,8 @@ def _remove_background(image, mode, key_scope='edge-connected'):
 
 def export_video(video, ffmpeg, out, *, character, action, start, duration, count,
                  loop, background, origin, review_notes, key_scope='edge-connected',
-                 character_image=None, batch=None, batch_character=None):
+                 character_image=None, batch=None, batch_character=None,
+                 black_sidebars=None, draft=False):
     video, ffmpeg, out = Path(video).resolve(), Path(ffmpeg).resolve(), Path(out).resolve()
     if not video.is_file() or not ffmpeg.is_file():
         raise ValueError('Provide an existing video and FFmpeg executable')
@@ -143,6 +157,10 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         raise ValueError('Choose explicit alpha/key extraction and describe the inspected interval')
     if key_scope not in ('edge-connected', 'all'):
         raise ValueError('Key scope must be edge-connected or all')
+    if type(draft) is not bool:
+        raise ValueError('Draft must be an explicit boolean')
+    if black_sidebars is not None and (len(black_sidebars) != 2 or any(type(v) is not int or v < 0 for v in black_sidebars)):
+        raise ValueError('Black sidebars require two fixed nonnegative widths')
     if background == 'alpha' and key_scope != 'edge-connected':
         raise ValueError('Key scope only applies to a keyed background')
     if len(origin) != 2 or any(type(v) is not int or v < 0 for v in origin):
@@ -185,17 +203,20 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         paths = sorted(rawdir.glob('frame-*.png'))
         if len(paths) != count:
             raise ValueError(f'Interval yielded {len(paths)} frames, expected {count}; no silent padding')
-        frames, bounds, dimensions = [], [], None
+        frames, bounds, dimensions, edge_frames = [], [], None, []
         for path in paths:
             with Image.open(path) as raw:
                 if dimensions is None:
                     dimensions = raw.size
                 if raw.size != dimensions:
                     raise ValueError('Decoded frame dimensions changed')
-                clean = _remove_background(raw, background, key_scope)
+                clean = _remove_background(raw, background, key_scope, black_sidebars)
             b = clean.getchannel('A').getbbox()
-            if not b or b[0] == 0 or b[1] == 0 or b[2] == clean.width or b[3] == clean.height:
+            touches_edge = b and (b[0] == 0 or b[1] == 0 or b[2] == clean.width or b[3] == clean.height)
+            if not b or (touches_edge and not draft):
                 raise ValueError('A video frame is empty or touches the canvas edge; retain the full character in source video')
+            if touches_edge:
+                edge_frames.append(selected[len(frames)]['index'])
             frames.append(clean)
             bounds.append(list(b))
         shutil.rmtree(rawdir)
@@ -233,7 +254,9 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                 'source_frame_indices': [frame['index'] for frame in selected],
                 'source_times_seconds': [float(frame['time']) for frame in selected],
                 'bounds': bounds, 'accepted_by_user': False}
-        report = {'character': character, 'status': 'video_review_sample', 'clips': [clip],
+        sample_status = 'video_draft_sample' if draft else 'video_review_sample'
+        report = {'character': character, 'status': sample_status, 'clips': [clip],
+                  'draft': draft, 'source_edge_frames': edge_frames,
                   'scope_mode': 'action_study', 'full_character_complete': False,
                   'coverage_binding': coverage_binding, 'character_reference': character_copy,
                   'character_sha256': character_hash,
@@ -242,6 +265,8 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                   'interval': [start, start + duration],
                   'sampling': 'Nearest unique source frame within [start, end) for each uniform target time; midpoint ties use the earlier frame; no optical flow or padding',
                   'background': background,
+                  'black_sidebars': list(black_sidebars) if black_sidebars is not None else None,
+                  'sidebar_processing': 'Remove edge-connected near-black pixels only inside fixed left/right sidebar widths; preserve canvas and nonblack extensions' if black_sidebars is not None else None,
                   'key_scope': key_scope if background != 'alpha' else None,
                   'background_removal': 'preserved source alpha' if background == 'alpha' else f'fixed chroma thresholds, {key_scope} key pixels; no per-frame erosion or despill',
                   'pose_correspondence_verified': False, 'game_assets_replaced': False,
@@ -254,6 +279,8 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         template = template.replace('完整图集 · 透明帧 · 连续播放', '视频抽帧 · 透明帧 · 单动作对照')
         template = template.replace('data.character+" · 动作小样"', 'data.character+" · 视频抽帧单动作试样"')
         template = template.replace('整张图集导出的独立小样。', '连续视频抽帧样例。')
+        if draft:
+            template = template.replace('视频抽帧 · 透明帧 · 单动作对照', '诊断草稿 · 原片可能缺损 · 不可作为合格素材')
         template = template.replace('<a href="source-partitions.png" target="_blank" rel="noopener">原图与人物边界 ↗</a>', '')
         template = template.replace('<a href="source-transparent.png" target="_blank" rel="noopener">透明原图 ↗</a>', '')
         comparison = ('<details class="details"><summary>原始视频对照（保留背景）</summary>'
@@ -263,7 +290,7 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         template = template.replace('  <footer>', '  ' + comparison + '\n  <footer>')
         (staging / 'index.html').write_text(template, encoding='utf-8')
         staging.rename(out)
-    return {'preview': str(out / 'index.html'), 'status': 'video_review_sample', 'count': count,
+    return {'preview': str(out / 'index.html'), 'status': sample_status, 'count': count,
             'scope_mode': 'action_study', 'full_character_complete': False}
 
 
@@ -278,6 +305,10 @@ if __name__ == '__main__':
     parser.add_argument('--background', choices=['alpha', 'magenta', 'green'], required=True)
     parser.add_argument('--key-scope', choices=['edge-connected', 'all'], default='edge-connected',
                         help='Use all only after checking that the character has no key color; also removes enclosed background gaps')
+    parser.add_argument('--black-sidebars', type=int, nargs=2, metavar=('LEFT', 'RIGHT'),
+                        help='Explicit fixed black pillarbox widths; remove edge-connected black there without cropping the canvas')
+    parser.add_argument('--draft', action='store_true',
+                        help='Allow source-edge clipping for diagnostic viewing only; the output cannot pass batch acceptance')
     parser.add_argument('--origin', type=int, nargs=2, required=True)
     parser.add_argument('--character-image', help='Approved source appearance; bound batches supply this automatically')
     parser.add_argument('--batch', help='Existing project-discovery coverage batch')

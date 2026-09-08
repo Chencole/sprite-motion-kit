@@ -179,6 +179,8 @@ def video_evidence(sample, character_hash, action, expected_binding):
         raise ValueError('Video sample manifest must be an object')
     if manifest.get('status') != 'video_review_sample' or manifest.get('scope_mode') != 'action_study':
         raise ValueError('Expected a bound single-action video review sample')
+    if manifest.get('draft') or manifest.get('source_edge_frames'):
+        raise ValueError('Diagnostic or source-clipped video samples cannot pass batch acceptance')
     if manifest.get('coverage_binding') != expected_binding:
         raise ValueError('Video sample does not match this character/action/gameplay requirement binding')
     reference = sample_path(sample, manifest.get('character_reference'))
