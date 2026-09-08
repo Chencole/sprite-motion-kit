@@ -1,5 +1,32 @@
 # Sprite Motion Kit
 
+**当前为私有实验版本，尚未证明能稳定生成自然动作。** The repository is private;
+installation requires repository access. No public release or model weights are
+being distributed as a finished animation solution.
+
+## Existing image/video account connection
+
+The plugin can now use an existing **MXAPI/MyPixelFlow** account to submit image
+jobs and **Seedance** video jobs, query progress and download the actual results.
+It can reuse MyPixelFlow's encrypted local account without copying secrets or
+modifying that project. Other installations provide their own account. See the
+[connection workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/mxapi-generation.md).
+
+The selected video route is **character still → continuous action video → local
+transparent frames → playback review**. It uses existing FFmpeg for timestamp-based
+frame extraction, preserves one canvas and jump height, and supports green/magenta
+key backgrounds. Local source files need the user's own reachable media publisher;
+the image generator's returned HTTPS output can go directly into Seedance.
+No quota, credentials or models are included. Successful connection/extraction tests
+are not a promise of stable character motion; one real sample still needs review.
+
+The reusable [whole-sheet sample workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/whole-sheet-samples.md)
+now packages the direct host-image approach: a complete generated character sheet,
+component-aware transparent extraction, common coordinates and a browser reviewer.
+The host still needs its own image-generation access. The second skeleton sample
+is included under `examples/skeleton-sheet-sample`; its walk revision was blocked
+by a service usage limit, so its original walk remains a review draft.
+
 **用户需求 → AI 设计三维体型与动作 → 木头人参考 → AI 角色帧 → 图集与可视化检查。**
 
 A Codex plugin for custom game-character animation authoring. The AI designs the anatomy and key poses for the requested action; local tools render an orthographic 3D mannequin guide, package character sprites, and open a synchronized offline reviewer.
@@ -86,6 +113,27 @@ Custom schema-2 plans and imported schema-3 references use the same generation g
 
 ## Development and distribution
 
+### Experimental generation execution
+
+The optional [sequence-conditioned backend](plugins/sprite-motion-kit/skills/sprite-motion/references/conditioned-generation.md)
+passes measured 3D pose controls, character identity and the entire action
+sequence to a local Diffusers pipeline. Unlike the default host-tool packet, it
+contains an actual inference call. It does not include weights, download models
+or run automatically. **The first actual eight-frame trial completed inference
+but failed visually: the character was severely blurred and unusable. This is
+not a replacement for the host image generator or a stable animation fix.** Preparing control images or passing
+mocked API tests is not a successful character-generation result. All outputs
+remain diagnostic until separately reviewed.
+
+A subsequent trial corrected reference-image padding, prompt truncation and
+scheduler configuration but still produced unusable blurred art. These changes
+are retained as experimental code, not enabled as the default generation route.
+
+The optional model setup script downloads the pinned files directly from their
+upstream repositories and checks exact sizes and SHA-256 values. Model weights
+are not included in this MIT repository; their separate licenses still apply.
+Reproducible installation does not imply reproducibly good animation.
+
 ```sh
 python -m unittest discover -s tests -v
 python scripts/package.py
@@ -93,7 +141,7 @@ python scripts/package.py
 
 Code, procedural renderer and workflow: **MIT** (modify, redistribute, commercial use permitted). Bundled legacy references: **CC0**, derived from Quaternius' Universal Animation Library. User character artwork and generated outputs retain their own applicable rights.
 
-This repository contains no private game code, saves, character artwork, credentials or model weights. See [privacy](docs/PRIVACY.md), [terms](docs/TERMS.md) and [official directory status](docs/OFFICIAL-SUBMISSION.md). GitHub distribution is independent of OpenAI's public directory; no official listing is claimed.
+This repository contains no private game code, saves, credentials or model weights. The explicit review examples contain generated sample artwork. See [privacy](docs/PRIVACY.md), [terms](docs/TERMS.md) and [official directory status](docs/OFFICIAL-SUBMISSION.md). GitHub distribution is independent of OpenAI's public directory; no official listing is claimed.
 
 ## 生成前置检查
 

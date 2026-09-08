@@ -1,0 +1,88 @@
+{
+  "schema": 1,
+  "mode": "whole_sheet_sample",
+  "character": "翠甲亡灵剑卫",
+  "image": "source-original.png",
+  "background": "magenta",
+  "grid": [
+    8,
+    5
+  ],
+  "tile": [
+    320,
+    320
+  ],
+  "origin": [
+    160,
+    250
+  ],
+  "minimum_body_pixels": 985,
+  "row_ground_y": [
+    188,
+    386,
+    574,
+    747,
+    954
+  ],
+  "registration_notes": "按原图实际落地靴底检查整行基准：行走第1格、跑步第6格、攻击第2格、倒地第1格、跳跃第1格。只平移整行坐标，跳跃第4至5格保留离地高度，没有逐帧贴地或改比例。",
+  "required_actions": [
+    "walk",
+    "run",
+    "attack",
+    "death",
+    "jump"
+  ],
+  "actions": [
+    {
+      "name": "walk",
+      "rows": [
+        0
+      ],
+      "seconds": 1.0,
+      "loop": true,
+      "design": "轻型骷髅持剑前进，肩胯配合，短披布跟随，完整两步循环。",
+      "review_note": "原图多格姿势接近；单独行走修订因生图额度用完未产出，未达到上一例的修订程度。"
+    },
+    {
+      "name": "run",
+      "rows": [
+        1
+      ],
+      "seconds": 0.72,
+      "loop": true,
+      "design": "前倾快跑、回收脚折向身后，腾空后另一脚落地，剑跟随手臂。"
+    },
+    {
+      "name": "attack",
+      "rows": [
+        2
+      ],
+      "seconds": 0.85,
+      "loop": false,
+      "design": "持剑蓄力、举剑、前跨下劈、随挥、恢复警戒；保留完整剑和剑光。"
+    },
+    {
+      "name": "death",
+      "rows": [
+        3
+      ],
+      "seconds": 1.05,
+      "loop": false,
+      "design": "骷髅受击后屈膝、前撑、倒在侧前方，全身保留，不缩小消失。"
+    },
+    {
+      "name": "jump",
+      "rows": [
+        4
+      ],
+      "seconds": 1.05,
+      "loop": false,
+      "design": "屈膝、蹬地、升空、顶点、下落、缓冲、站起，武器随手，保持真实离地高度。"
+    }
+  ],
+  "notes": [
+    "第二角色对照样例：完整图集生成、真实透明导出、按统一画布播放，未覆盖游戏素材。",
+    "行走仍是整套图中的原始八帧，多格姿势接近；单独修订遇到生图额度限制，尚未完成。",
+    "这次能验证导出流程复用，不能证明每个角色都能稳定生成与上一例相同的流畅程度。"
+  ]
+}

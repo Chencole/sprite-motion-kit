@@ -1,0 +1,7 @@
+# Optional sequence backend. Install a hardware-appropriate PyTorch build first.
+# These are separate from the light reference-render/export dependencies.
+diffusers==0.35.2
+transformers==4.57.1
+accelerate==1.10.1
+huggingface-hub==0.36.0
+safetensors==0.6.2

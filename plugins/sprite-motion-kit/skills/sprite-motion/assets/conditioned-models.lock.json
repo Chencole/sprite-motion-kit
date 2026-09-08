@@ -1,0 +1,227 @@
+{
+  "schema": 1,
+  "repositories": [
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "license": "creativeml-openrail-m",
+      "license_note": "Repository model-card metadata; not a blanket license for other components",
+      "card_url": "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/blob/451f4fe16113bff5a5d2269ed5ad43b0592e9a14/README.md"
+    },
+    {
+      "repo": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "commit": "6167b88ffe39b4441fdf2113e77b99a6f56b7906",
+      "license": null,
+      "license_note": "No license declared in the visible model card/API metadata",
+      "card_url": "https://huggingface.co/guoyww/animatediff-motion-adapter-v1-5-2/blob/6167b88ffe39b4441fdf2113e77b99a6f56b7906/README.md"
+    },
+    {
+      "repo": "lllyasviel/sd-controlnet-openpose",
+      "commit": "df796456519d1ac5dbe674caa0653fcc9673bca8",
+      "license": "openrail",
+      "license_note": "Repository model-card metadata; not a blanket license for other components",
+      "card_url": "https://huggingface.co/lllyasviel/sd-controlnet-openpose/blob/df796456519d1ac5dbe674caa0653fcc9673bca8/README.md"
+    },
+    {
+      "repo": "h94/IP-Adapter",
+      "commit": "018e402774aeeddd60609b4ecdb7e298259dc729",
+      "license": "apache-2.0",
+      "license_note": "Repository model-card metadata; not a blanket license for other components",
+      "card_url": "https://huggingface.co/h94/IP-Adapter/blob/018e402774aeeddd60609b4ecdb7e298259dc729/README.md"
+    }
+  ],
+  "files": [
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "README.md",
+      "destination": "sd15/README.md",
+      "size": 14461,
+      "sha256": "2079161f9df7524bd9eca5e53ff5911271b8551e0f868b7b5a92b84776df28a3"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "model_index.json",
+      "destination": "sd15/model_index.json",
+      "size": 541,
+      "sha256": "e2f6f22e274374010aec30c79eb2d6e53fff4a36ac0225523a92cb2d41a83347"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "feature_extractor/preprocessor_config.json",
+      "destination": "sd15/feature_extractor/preprocessor_config.json",
+      "size": 342,
+      "sha256": "2a1da83b5e1032aaeef397552ddb408dca0d8cd1dc58f61bf6abf38d6f33a0a2"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "scheduler/scheduler_config.json",
+      "destination": "sd15/scheduler/scheduler_config.json",
+      "size": 308,
+      "sha256": "699cce92eb7c122e2eb7dfdea78e6187fda76a5ed4a8e42319b85610e620e091"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "text_encoder/config.json",
+      "destination": "sd15/text_encoder/config.json",
+      "size": 617,
+      "sha256": "845df614cb9327ae7bbea027316246fae917827407da6df13572e41b5f93b4cc"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "text_encoder/model.fp16.safetensors",
+      "destination": "sd15/text_encoder/model.safetensors",
+      "size": 246144864,
+      "sha256": "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "tokenizer/merges.txt",
+      "destination": "sd15/tokenizer/merges.txt",
+      "size": 524619,
+      "sha256": "9fd691f7c8039210e0fced15865466c65820d09b63988b0174bfe25de299051a"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "tokenizer/special_tokens_map.json",
+      "destination": "sd15/tokenizer/special_tokens_map.json",
+      "size": 472,
+      "sha256": "c4864a9376a8401918425bed71fc14fc0e81f9b59ec45c1cf96cccb2df508eac"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "tokenizer/tokenizer_config.json",
+      "destination": "sd15/tokenizer/tokenizer_config.json",
+      "size": 806,
+      "sha256": "00439066fcba73de57644cf41e4e3b9f2dbb09d7f3fc2005898ba52399045882"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "tokenizer/vocab.json",
+      "destination": "sd15/tokenizer/vocab.json",
+      "size": 1059962,
+      "sha256": "e089ad92ba36837a0d31433e555c8f45fe601ab5c221d4f607ded32d9f7a4349"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "unet/config.json",
+      "destination": "sd15/unet/config.json",
+      "size": 743,
+      "sha256": "78f474de6bab3d893868f37be97b636ae65c0df3073ed3256ca458ff599b5f96"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "unet/diffusion_pytorch_model.fp16.safetensors",
+      "destination": "sd15/unet/diffusion_pytorch_model.safetensors",
+      "size": 1719125304,
+      "sha256": "c83908253f9a64d08c25fc90874c9c8aef9a329ce1ca5fb909d73b0c83d1ea21"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "vae/config.json",
+      "destination": "sd15/vae/config.json",
+      "size": 547,
+      "sha256": "786a7d21647ddea6a04b9675c03d3cb45e90a2f3c6da5fbda2c54ade040036de"
+    },
+    {
+      "repo": "stable-diffusion-v1-5/stable-diffusion-v1-5",
+      "commit": "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+      "source_path": "vae/diffusion_pytorch_model.fp16.safetensors",
+      "destination": "sd15/vae/diffusion_pytorch_model.safetensors",
+      "size": 167335342,
+      "sha256": "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"
+    },
+    {
+      "repo": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "commit": "6167b88ffe39b4441fdf2113e77b99a6f56b7906",
+      "source_path": "README.md",
+      "destination": "animatediff-v15-2/README.md",
+      "size": 2695,
+      "sha256": "baeae35cd835d10093173af12b72f18a6b53001c0c7d748d5d4931b7c6392246"
+    },
+    {
+      "repo": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "commit": "6167b88ffe39b4441fdf2113e77b99a6f56b7906",
+      "source_path": "config.json",
+      "destination": "animatediff-v15-2/config.json",
+      "size": 455,
+      "sha256": "7a82341871beba9826ebb8e608415ae2501686bc2e1ccb7a810e50c4b1e37863"
+    },
+    {
+      "repo": "guoyww/animatediff-motion-adapter-v1-5-2",
+      "commit": "6167b88ffe39b4441fdf2113e77b99a6f56b7906",
+      "source_path": "diffusion_pytorch_model.fp16.safetensors",
+      "destination": "animatediff-v15-2/diffusion_pytorch_model.safetensors",
+      "size": 1815329816,
+      "sha256": "5fd196988206cfac90bab1dc56cc59fdd12035492f74ff0662eb6eed5113c547"
+    },
+    {
+      "repo": "lllyasviel/sd-controlnet-openpose",
+      "commit": "df796456519d1ac5dbe674caa0653fcc9673bca8",
+      "source_path": "README.md",
+      "destination": "controlnet-openpose/README.md",
+      "size": 11528,
+      "sha256": "7372ad08dde908b6f347f70e71cb6f9aca4af3e021408b138033a49c885abf17"
+    },
+    {
+      "repo": "lllyasviel/sd-controlnet-openpose",
+      "commit": "df796456519d1ac5dbe674caa0653fcc9673bca8",
+      "source_path": "config.json",
+      "destination": "controlnet-openpose/config.json",
+      "size": 920,
+      "sha256": "dbeca6e56d9319a78d6a63758887334a6143bd270e590864b8182b0139d1a18c"
+    },
+    {
+      "repo": "lllyasviel/sd-controlnet-openpose",
+      "commit": "df796456519d1ac5dbe674caa0653fcc9673bca8",
+      "source_path": "diffusion_pytorch_model.safetensors",
+      "destination": "controlnet-openpose/diffusion_pytorch_model.safetensors",
+      "size": 1445157124,
+      "sha256": "a3ca16220ebd7220d37a67d68329b4290f2c72a854955fd35f84b97c85596e5b"
+    },
+    {
+      "repo": "h94/IP-Adapter",
+      "commit": "018e402774aeeddd60609b4ecdb7e298259dc729",
+      "source_path": "README.md",
+      "destination": "ip-adapter/README.md",
+      "size": 3091,
+      "sha256": "ba3a50dc2093d0eb075890e9af7409382874669d83939e64323246d0c4403cf8"
+    },
+    {
+      "repo": "h94/IP-Adapter",
+      "commit": "018e402774aeeddd60609b4ecdb7e298259dc729",
+      "source_path": "models/ip-adapter-plus_sd15.safetensors",
+      "destination": "ip-adapter/models/ip-adapter-plus_sd15.safetensors",
+      "size": 98183288,
+      "sha256": "a1c250be40455cc61a43da1201ec3f1edaea71214865fb47f57927e06cbe4996"
+    },
+    {
+      "repo": "h94/IP-Adapter",
+      "commit": "018e402774aeeddd60609b4ecdb7e298259dc729",
+      "source_path": "models/image_encoder/config.json",
+      "destination": "ip-adapter/models/image_encoder/config.json",
+      "size": 560,
+      "sha256": "625d37b31afbf2f0792a87846b3654ee23f20568409e35b78a1f795b04e1a7a1"
+    },
+    {
+      "repo": "h94/IP-Adapter",
+      "commit": "018e402774aeeddd60609b4ecdb7e298259dc729",
+      "source_path": "models/image_encoder/model.safetensors",
+      "destination": "ip-adapter/models/image_encoder/model.safetensors",
+      "size": 2528373448,
+      "sha256": "6ca9667da1ca9e0b0f75e46bb030f7e011f44f86cbfb8d5a36590fcd7507b030"
+    }
+  ]
+}

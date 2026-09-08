@@ -4,5 +4,8 @@ __pycache__/
 jobs/
 dist/
 work/
+.env
+.env.*
+!.env.example
 .DS_Store
 Thumbs.db

@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>角色动作小样 · 五动作小样</title>
+<style>
+:root{color-scheme:dark;font:15px/1.6 system-ui,"Microsoft YaHei",sans-serif;color:#dfe7dd;background:#111812}*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:32px 24px}header{display:flex;justify-content:space-between;gap:20px;align-items:center}h1{font-size:28px;letter-spacing:2px;margin:0 0 6px}p{margin:0;color:#a4b2a2}.eyebrow{font:11px/2 monospace;letter-spacing:3px;color:#ccae72}.badge{border:1px solid #53634e;padding:5px 13px;border-radius:20px;color:#c9d8c3;font-size:12px;white-space:nowrap}.compare{display:inline-block;font-size:13px;margin-top:10px}.tabs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px;margin:24px 0 12px}button,select{font:inherit;color:inherit;border:1px solid #40503d;background:#1c291c;border-radius:7px;padding:9px 14px;cursor:pointer}button:hover{border-color:#bc9d66}button:disabled{opacity:.5;cursor:wait}button:focus-visible,select:focus-visible,a:focus-visible,input:focus-visible{outline:2px solid #e0c18a;outline-offset:3px}.tabs button[aria-pressed=true]{background:#3d5137;border-color:#ccae72;color:#ffe4b0}.tabmeta{display:block;color:#acb8a3;font-size:11px;white-space:nowrap}.stage{position:relative;border:1px solid #40503d;border-radius:10px;overflow:hidden;background:#1d2e20}canvas{display:block;width:100%;height:440px;image-rendering:pixelated}.stagename{position:absolute;left:18px;top:14px;color:#d0dfca;font-size:13px}.stagehint{position:absolute;right:18px;top:14px;font:12px/1.6 monospace;color:#b4c1ad}.tools{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:14px 0}.tools label{display:flex;align-items:center;gap:7px;color:#bfccb7;font-size:13px;margin-left:7px}.tools button{font-size:13px}.timeline{display:flex;gap:16px;align-items:center;padding:5px 0 16px;font-size:13px;color:#b4c4aa}input[type=range]{flex:1;min-width:60px;accent-color:#c3a36b}#framecount{min-width:83px;font-variant-numeric:tabular-nums}#atlaslink{white-space:nowrap}.thumbs{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:10px}.thumbs button{min-width:0;padding:0;overflow:hidden;text-align:left}.thumbs button[aria-pressed=true]{border-color:#ccae72}.thumbs canvas{height:150px;background:#1a291d}.thumbs span{display:block;padding:7px 10px;font-size:12px;border-top:1px solid #40503d}.details{margin-top:24px;padding:16px 20px;border-left:2px solid #b89d69;background:#1b271b;font-size:13px;color:#b3c2aa}.details strong{color:#dfe8d9;font-weight:500}a{color:#d1b782;text-decoration:none}a:hover{text-decoration:underline}footer{display:flex;gap:16px 24px;flex-wrap:wrap;font-size:12px;color:#8ea184;margin-top:24px}.status{color:#b9c7af;font-size:12px;min-height:22px}@media(max-width:650px){main{padding:20px 12px}header{align-items:flex-start}h1{font-size:22px}.badge{display:none}.eyebrow{font-size:10px;letter-spacing:2px}.tabs{gap:5px}.tabs button{padding:8px 3px;font-size:13px}.tabmeta{font-size:10px}canvas{height:340px}.thumbs{grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.thumbs canvas{height:128px}.tools{gap:6px}.tools button{padding:8px 10px}.tools label{margin-left:0}.timeline{gap:10px;flex-wrap:wrap}#scrub{flex-basis:calc(100% - 103px)}#atlaslink{margin-left:auto}.stagehint{right:12px;font-size:11px}.stagename{left:12px}.details{padding:13px 15px}}
+</style>
+<main>
+  <header><div><div class="eyebrow">CHARACTER SAMPLE 02 / MOTION STUDY</div><h1>角色动作小样</h1><p>完整图集 · 透明帧 · 连续播放</p></div><div class="badge">待审核 · 动作小样</div></header>
+  <nav class="tabs" id="tabs" aria-label="选择动作"></nav>
+  <section class="stage"><div class="stagename" id="actiontitle">行走</div><div class="stagehint" id="state">加载角色…</div><canvas id="stage" aria-label="角色动作播放画面"></canvas></section>
+  <div class="tools"><button id="play" disabled>暂停</button><button id="restart" disabled>重播</button><button id="prev" disabled>上一帧</button><button id="next" disabled>下一帧</button><label>速度 <select id="speed" disabled><option value="0.25">0.25 倍</option><option value="0.5">0.5 倍</option><option value="1" selected>正常速度</option></select></label><label><input type="checkbox" id="travel" disabled>向前移动</label><label><input type="checkbox" id="ground" checked>地面线</label></div>
+  <div class="timeline"><span id="framecount">等待动作帧</span><input id="scrub" aria-label="逐帧位置" type="range" min="0" max="0" value="0" disabled><a id="atlaslink" href="walk/contact.png" target="_blank" rel="noopener">展开动作帧 ↗</a></div>
+  <div class="status" id="notice" role="status">正在加载五种动作。</div>
+  <div class="thumbs" id="thumbs" aria-label="动作缩略预览"></div>
+  <div class="details"><strong>整张图集导出的独立小样。</strong> 点击动作切换，暂停后可逐帧检查姿势、尺度与首尾衔接。倒地结束保留末帧，跳跃保留离地高度。当前供对照审核，动作质量仍需逐项确认。</div>
+  <footer><a href="sample.json" target="_blank" rel="noopener">帧序与导出记录 ↗</a><a href="source-partitions.png" target="_blank" rel="noopener">原图与人物边界 ↗</a><a href="source-transparent.png" target="_blank" rel="noopener">透明原图 ↗</a><span>独立小样 · 未覆盖游戏素材</span></footer>
+</main>
+<script>
+const names={walk:'行走',run:'跑步',attack:'攻击',death:'倒地',jump:'跳跃'};
+const $=id=>document.getElementById(id);
+let clips=[],images={},thumbs=[],current='walk',playing=true,time=0,last=0,speed=1,travel=false,travelTime=0,thumbTime=0,renderId=0;
+function currentClip(){return clips.find(c=>c.name===current)}
+function currentFrame(c=currentClip(),t=time){if(!c)return 0;const f=Math.max(0,Math.floor(t/c.seconds*c.count));return c.loop?f%c.count:Math.min(c.count-1,f)}
+function select(name){
+  current=name;time=0;travelTime=0;playing=true;
+  const c=currentClip();$('scrub').max=c.count-1;$('atlaslink').href=name+'/contact.png';$('actiontitle').textContent=names[name]||name;$('travel').disabled=!c.loop;
+  document.querySelectorAll('[data-name]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.name===name)));
+  $('notice').textContent=(names[name]||name)+' · '+c.count+' 帧 · '+(c.loop?'循环播放，可慢放检查首尾衔接。':'单次播放，结束保留末帧。');
+  render();
+}
+function size(canvas){
+  const rect=canvas.getBoundingClientRect(),ratio=devicePixelRatio||1;
+  if(canvas.width!==Math.round(rect.width*ratio)||canvas.height!==Math.round(rect.height*ratio)){canvas.width=Math.round(rect.width*ratio);canvas.height=Math.round(rect.height*ratio)}
+  const ctx=canvas.getContext('2d');ctx.setTransform(ratio,0,0,ratio,0,0);ctx.imageSmoothingEnabled=false;return [ctx,rect.width,rect.height];
+}
+function draw(canvas,c,index,small=false){
+  const [ctx,w,h]=size(canvas),[tw,th]=c.tile||[320,320],[ox,oy]=c.origin||[160,250];
+  const pad=small?7:24,top=small?7:52;
+  const scale=Math.max(.01,Math.min(small?.65:1.6,(w-pad*2)/tw,(h-top-pad)/th));
+  const floor=small?(h-th*scale)/2+oy*scale:Math.min(h*.82,h-pad-(th-oy)*scale);
+  let x=w/2;
+  if(!small&&travel&&c.loop){const left=pad+ox*scale,right=w-pad-(tw-ox)*scale,span=right-left;if(span>1)x=left+(travelTime*(c.name==='run'?110:55))%span}
+  ctx.clearRect(0,0,w,h);
+  if(!small){
+    const g=ctx.createLinearGradient(0,0,0,h);g.addColorStop(0,'#121e17');g.addColorStop(.78,'#2b3c2b');g.addColorStop(1,'#19271d');ctx.fillStyle=g;ctx.fillRect(0,0,w,h);ctx.fillStyle='#233225';ctx.fillRect(0,floor,w,h-floor);
+    ctx.strokeStyle='#3d5038';ctx.lineWidth=1;
+    for(let j=-w;j<w*2;j+=85){ctx.beginPath();ctx.moveTo(w/2+(j-w/2)*.66,floor);ctx.lineTo(j,h);ctx.stroke()}
+    if($('ground').checked){ctx.strokeStyle='#a58c5f';ctx.beginPath();ctx.moveTo(0,floor+.5);ctx.lineTo(w,floor+.5);ctx.stroke()}
+  }
+  const frame=images[c.name]?.[index];
+  if(frame)ctx.drawImage(frame,Math.round(x-ox*scale),Math.round(floor-oy*scale),tw*scale,th*scale);
+  canvas.dataset.action=c.name;canvas.dataset.frame=String(index);canvas.dataset.scale=String(scale);
+}
+function render(){
+  const c=currentClip();if(!c||!images[c.name])return;
+  const f=currentFrame();draw($('stage'),c,f);
+  $('framecount').textContent='第 '+(f+1)+' / '+c.count+' 帧';$('scrub').value=f;
+  const ended=!c.loop&&time>=c.seconds;
+  $('state').textContent=ended?'动作结束 · 保持末帧':playing?(speed===1?'正常播放':speed+' 倍播放'):'已暂停';
+  $('play').textContent=playing&&!ended?'暂停':'播放';
+  for(const t of thumbs)draw(t.canvas,t.clip,currentFrame(t.clip,t.clip.loop?thumbTime:thumbTime%(t.clip.seconds+2)),true);
+  $('stage').dataset.playing=String(playing&&!ended);$('stage').dataset.ended=String(ended);$('stage').dataset.render=String(++renderId);
+}
+function step(delta){playing=false;const c=currentClip(),f=(currentFrame()+delta+c.count)%c.count;time=(f+.01)/c.count*c.seconds;render()}
+$('play').onclick=()=>{const c=currentClip();if(!c.loop&&time>=c.seconds){time=0;playing=true}else playing=!playing;render()};
+$('restart').onclick=()=>select(current);$('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);
+$('speed').onchange=e=>{speed=Number(e.target.value);render()};
+$('travel').onchange=e=>{travel=e.target.checked;travelTime=0;render()};
+$('ground').onchange=render;
+$('scrub').oninput=e=>{playing=false;time=(Number(e.target.value)+.01)/currentClip().count*currentClip().seconds;render()};
+async function init(){
+  const response=await fetch('sample.json');if(!response.ok)throw Error('Manifest HTTP '+response.status);
+  const data=await response.json();clips=data.clips;document.querySelector("h1").textContent=data.character;document.title=data.character+" · 动作小样";if(data.notes?.length)document.querySelector(".details").textContent=data.notes.join(" ");
+  if(!Array.isArray(clips)||!clips.length)throw Error('Manifest has no clips');
+  await Promise.all(clips.map(async c=>{
+    if(!c.count||c.count!==c.frames?.length||!(c.seconds>0))throw Error('Invalid clip: '+c.name);
+    images[c.name]=await Promise.all(c.frames.map(src=>new Promise((resolve,reject)=>{const img=new Image;img.onload=()=>resolve(img);img.onerror=()=>reject(Error('Frame failed to load: '+src));img.src=src})));
+  }));
+  // Create controls after loading, in manifest order rather than image completion order.
+  for(const c of clips){
+    const button=document.createElement('button');button.dataset.name=c.name;button.append(document.createTextNode(names[c.name]||c.name));
+    const meta=document.createElement('span');meta.className='tabmeta';meta.textContent=c.count+' 帧 · '+(c.loop?'循环':'单次');button.append(meta);button.onclick=()=>select(c.name);$('tabs').append(button);
+    const mini=document.createElement('button');mini.dataset.name=c.name;mini.setAttribute('aria-label','预览'+(names[c.name]||c.name));
+    const canvas=document.createElement('canvas');canvas.setAttribute('aria-hidden','true');const label=document.createElement('span');label.textContent=names[c.name]||c.name;mini.append(canvas,label);mini.onclick=()=>select(c.name);$('thumbs').append(mini);thumbs.push({canvas,clip:c});
+  }
+  document.querySelectorAll('.tools button,#speed,#scrub').forEach(control=>control.disabled=false);
+  current=clips.some(c=>c.name==='walk')?'walk':clips[0].name;select(current);$('stage').dataset.ready='true';last=performance.now();requestAnimationFrame(tick);
+}
+function tick(now){const dt=Math.min(.05,(now-last)/1000);last=now;if(playing){time+=dt*speed;travelTime+=dt*speed}thumbTime+=dt;render();requestAnimationFrame(tick)}
+window.addEventListener('resize',render);
+init().catch(e=>{$('state').textContent='加载失败';$('notice').textContent='角色帧未能加载，请通过本地预览入口打开。';console.error(e)});
+</script>
+</html>

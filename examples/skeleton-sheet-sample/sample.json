@@ -1,0 +1,890 @@
+{
+  "character": "翠甲亡灵剑卫",
+  "status": "review_sample",
+  "clips": [
+    {
+      "name": "walk",
+      "count": 8,
+      "seconds": 1.0,
+      "loop": true,
+      "tile": [
+        320,
+        320
+      ],
+      "origin": [
+        160,
+        250
+      ],
+      "design": "轻型骷髅持剑前进，肩胯配合，短披布跟随，完整两步循环。",
+      "review_note": "原图多格姿势接近；单独行走修订因生图额度用完未产出，未达到上一例的修订程度。",
+      "frames": [
+        "walk/frame-000.png",
+        "walk/frame-001.png",
+        "walk/frame-002.png",
+        "walk/frame-003.png",
+        "walk/frame-004.png",
+        "walk/frame-005.png",
+        "walk/frame-006.png",
+        "walk/frame-007.png"
+      ],
+      "registration": [
+        {
+          "source_frame": 0,
+          "source_box": [
+            29,
+            42,
+            182,
+            188
+          ],
+          "source_anchor": [
+            99,
+            188
+          ],
+          "translation": [
+            90,
+            104
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 1,
+          "source_box": [
+            234,
+            37,
+            366,
+            188
+          ],
+          "source_anchor": [
+            297,
+            188
+          ],
+          "translation": [
+            97,
+            99
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 2,
+          "source_box": [
+            437,
+            41,
+            583,
+            187
+          ],
+          "source_anchor": [
+            496,
+            188
+          ],
+          "translation": [
+            101,
+            103
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 3,
+          "source_box": [
+            638,
+            45,
+            788,
+            188
+          ],
+          "source_anchor": [
+            694,
+            188
+          ],
+          "translation": [
+            104,
+            107
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 4,
+          "source_box": [
+            835,
+            45,
+            996,
+            188
+          ],
+          "source_anchor": [
+            892,
+            188
+          ],
+          "translation": [
+            103,
+            107
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 5,
+          "source_box": [
+            1051,
+            47,
+            1193,
+            189
+          ],
+          "source_anchor": [
+            1090,
+            188
+          ],
+          "translation": [
+            121,
+            109
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 6,
+          "source_box": [
+            1242,
+            41,
+            1388,
+            189
+          ],
+          "source_anchor": [
+            1289,
+            188
+          ],
+          "translation": [
+            113,
+            103
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 7,
+          "source_box": [
+            1443,
+            46,
+            1576,
+            189
+          ],
+          "source_anchor": [
+            1487,
+            188
+          ],
+          "translation": [
+            116,
+            108
+          ],
+          "scale": 1
+        }
+      ],
+      "accepted_by_user": false
+    },
+    {
+      "name": "run",
+      "count": 8,
+      "seconds": 0.72,
+      "loop": true,
+      "tile": [
+        320,
+        320
+      ],
+      "origin": [
+        160,
+        250
+      ],
+      "design": "前倾快跑、回收脚折向身后，腾空后另一脚落地，剑跟随手臂。",
+      "review_note": "",
+      "frames": [
+        "run/frame-000.png",
+        "run/frame-001.png",
+        "run/frame-002.png",
+        "run/frame-003.png",
+        "run/frame-004.png",
+        "run/frame-005.png",
+        "run/frame-006.png",
+        "run/frame-007.png"
+      ],
+      "registration": [
+        {
+          "source_frame": 8,
+          "source_box": [
+            14,
+            240,
+            158,
+            379
+          ],
+          "source_anchor": [
+            99,
+            386
+          ],
+          "translation": [
+            75,
+            104
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 9,
+          "source_box": [
+            203,
+            235,
+            353,
+            371
+          ],
+          "source_anchor": [
+            297,
+            386
+          ],
+          "translation": [
+            66,
+            99
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 10,
+          "source_box": [
+            412,
+            233,
+            562,
+            363
+          ],
+          "source_anchor": [
+            496,
+            386
+          ],
+          "translation": [
+            76,
+            97
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 11,
+          "source_box": [
+            612,
+            234,
+            762,
+            380
+          ],
+          "source_anchor": [
+            694,
+            386
+          ],
+          "translation": [
+            78,
+            98
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 12,
+          "source_box": [
+            807,
+            242,
+            952,
+            383
+          ],
+          "source_anchor": [
+            892,
+            386
+          ],
+          "translation": [
+            75,
+            106
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 13,
+          "source_box": [
+            989,
+            240,
+            1131,
+            386
+          ],
+          "source_anchor": [
+            1090,
+            386
+          ],
+          "translation": [
+            59,
+            104
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 14,
+          "source_box": [
+            1195,
+            242,
+            1350,
+            381
+          ],
+          "source_anchor": [
+            1289,
+            386
+          ],
+          "translation": [
+            66,
+            106
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 15,
+          "source_box": [
+            1401,
+            240,
+            1548,
+            383
+          ],
+          "source_anchor": [
+            1487,
+            386
+          ],
+          "translation": [
+            74,
+            104
+          ],
+          "scale": 1
+        }
+      ],
+      "accepted_by_user": false
+    },
+    {
+      "name": "attack",
+      "count": 8,
+      "seconds": 0.85,
+      "loop": false,
+      "tile": [
+        320,
+        320
+      ],
+      "origin": [
+        160,
+        250
+      ],
+      "design": "持剑蓄力、举剑、前跨下劈、随挥、恢复警戒；保留完整剑和剑光。",
+      "review_note": "",
+      "frames": [
+        "attack/frame-000.png",
+        "attack/frame-001.png",
+        "attack/frame-002.png",
+        "attack/frame-003.png",
+        "attack/frame-004.png",
+        "attack/frame-005.png",
+        "attack/frame-006.png",
+        "attack/frame-007.png"
+      ],
+      "registration": [
+        {
+          "source_frame": 16,
+          "source_box": [
+            28,
+            423,
+            189,
+            573
+          ],
+          "source_anchor": [
+            99,
+            574
+          ],
+          "translation": [
+            89,
+            99
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 17,
+          "source_box": [
+            214,
+            425,
+            390,
+            574
+          ],
+          "source_anchor": [
+            297,
+            574
+          ],
+          "translation": [
+            77,
+            101
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 18,
+          "source_box": [
+            425,
+            394,
+            556,
+            573
+          ],
+          "source_anchor": [
+            496,
+            574
+          ],
+          "translation": [
+            89,
+            70
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 19,
+          "source_box": [
+            633,
+            437,
+            820,
+            574
+          ],
+          "source_anchor": [
+            694,
+            574
+          ],
+          "translation": [
+            99,
+            113
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 20,
+          "source_box": [
+            826,
+            425,
+            1005,
+            575
+          ],
+          "source_anchor": [
+            892,
+            574
+          ],
+          "translation": [
+            94,
+            101
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 21,
+          "source_box": [
+            1021,
+            452,
+            1210,
+            572
+          ],
+          "source_anchor": [
+            1090,
+            574
+          ],
+          "translation": [
+            91,
+            128
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 22,
+          "source_box": [
+            1217,
+            432,
+            1388,
+            574
+          ],
+          "source_anchor": [
+            1289,
+            574
+          ],
+          "translation": [
+            88,
+            108
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 23,
+          "source_box": [
+            1417,
+            425,
+            1573,
+            573
+          ],
+          "source_anchor": [
+            1487,
+            574
+          ],
+          "translation": [
+            90,
+            101
+          ],
+          "scale": 1
+        }
+      ],
+      "accepted_by_user": false
+    },
+    {
+      "name": "death",
+      "count": 8,
+      "seconds": 1.05,
+      "loop": false,
+      "tile": [
+        320,
+        320
+      ],
+      "origin": [
+        160,
+        250
+      ],
+      "design": "骷髅受击后屈膝、前撑、倒在侧前方，全身保留，不缩小消失。",
+      "review_note": "",
+      "frames": [
+        "death/frame-000.png",
+        "death/frame-001.png",
+        "death/frame-002.png",
+        "death/frame-003.png",
+        "death/frame-004.png",
+        "death/frame-005.png",
+        "death/frame-006.png",
+        "death/frame-007.png"
+      ],
+      "registration": [
+        {
+          "source_frame": 24,
+          "source_box": [
+            34,
+            606,
+            172,
+            747
+          ],
+          "source_anchor": [
+            99,
+            747
+          ],
+          "translation": [
+            95,
+            109
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 25,
+          "source_box": [
+            239,
+            621,
+            356,
+            746
+          ],
+          "source_anchor": [
+            297,
+            747
+          ],
+          "translation": [
+            102,
+            124
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 26,
+          "source_box": [
+            434,
+            631,
+            552,
+            745
+          ],
+          "source_anchor": [
+            496,
+            747
+          ],
+          "translation": [
+            98,
+            134
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 27,
+          "source_box": [
+            606,
+            656,
+            750,
+            748
+          ],
+          "source_anchor": [
+            694,
+            747
+          ],
+          "translation": [
+            72,
+            159
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 28,
+          "source_box": [
+            776,
+            682,
+            951,
+            745
+          ],
+          "source_anchor": [
+            892,
+            747
+          ],
+          "translation": [
+            44,
+            185
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 29,
+          "source_box": [
+            986,
+            688,
+            1183,
+            748
+          ],
+          "source_anchor": [
+            1090,
+            747
+          ],
+          "translation": [
+            56,
+            191
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 30,
+          "source_box": [
+            1206,
+            702,
+            1377,
+            748
+          ],
+          "source_anchor": [
+            1289,
+            747
+          ],
+          "translation": [
+            77,
+            205
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 31,
+          "source_box": [
+            1392,
+            699,
+            1564,
+            748
+          ],
+          "source_anchor": [
+            1487,
+            747
+          ],
+          "translation": [
+            65,
+            202
+          ],
+          "scale": 1
+        }
+      ],
+      "accepted_by_user": false
+    },
+    {
+      "name": "jump",
+      "count": 8,
+      "seconds": 1.05,
+      "loop": false,
+      "tile": [
+        320,
+        320
+      ],
+      "origin": [
+        160,
+        250
+      ],
+      "design": "屈膝、蹬地、升空、顶点、下落、缓冲、站起，武器随手，保持真实离地高度。",
+      "review_note": "",
+      "frames": [
+        "jump/frame-000.png",
+        "jump/frame-001.png",
+        "jump/frame-002.png",
+        "jump/frame-003.png",
+        "jump/frame-004.png",
+        "jump/frame-005.png",
+        "jump/frame-006.png",
+        "jump/frame-007.png"
+      ],
+      "registration": [
+        {
+          "source_frame": 32,
+          "source_box": [
+            43,
+            815,
+            178,
+            954
+          ],
+          "source_anchor": [
+            99,
+            954
+          ],
+          "translation": [
+            104,
+            111
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 33,
+          "source_box": [
+            231,
+            833,
+            376,
+            955
+          ],
+          "source_anchor": [
+            297,
+            954
+          ],
+          "translation": [
+            94,
+            129
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 34,
+          "source_box": [
+            432,
+            780,
+            576,
+            938
+          ],
+          "source_anchor": [
+            496,
+            954
+          ],
+          "translation": [
+            96,
+            76
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 35,
+          "source_box": [
+            624,
+            759,
+            750,
+            911
+          ],
+          "source_anchor": [
+            694,
+            954
+          ],
+          "translation": [
+            90,
+            55
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 36,
+          "source_box": [
+            804,
+            761,
+            931,
+            887
+          ],
+          "source_anchor": [
+            892,
+            954
+          ],
+          "translation": [
+            72,
+            57
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 37,
+          "source_box": [
+            1005,
+            792,
+            1151,
+            935
+          ],
+          "source_anchor": [
+            1090,
+            954
+          ],
+          "translation": [
+            75,
+            88
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 38,
+          "source_box": [
+            1206,
+            839,
+            1367,
+            955
+          ],
+          "source_anchor": [
+            1289,
+            954
+          ],
+          "translation": [
+            77,
+            135
+          ],
+          "scale": 1
+        },
+        {
+          "source_frame": 39,
+          "source_box": [
+            1421,
+            813,
+            1564,
+            954
+          ],
+          "source_anchor": [
+            1487,
+            954
+          ],
+          "translation": [
+            94,
+            109
+          ],
+          "scale": 1
+        }
+      ],
+      "accepted_by_user": false
+    }
+  ],
+  "source_sha256": "a5256c774498e1d6577beb1e37039c93a332b86da84e2eb7c603865d9444be30",
+  "source_size": [
+    1586,
+    992
+  ],
+  "grid": [
+    8,
+    5
+  ],
+  "foreground_pixels_accounted_for": 353739,
+  "generation_calls_by_exporter": 0,
+  "game_assets_replaced": false,
+  "pose_correspondence_verified": false,
+  "registration_notes": "按原图实际落地靴底检查整行基准：行走第1格、跑步第6格、攻击第2格、倒地第1格、跳跃第1格。只平移整行坐标，跳跃第4至5格保留离地高度，没有逐帧贴地或改比例。",
+  "notes": [
+    "第二角色对照样例：完整图集生成、真实透明导出、按统一画布播放，未覆盖游戏素材。",
+    "行走仍是整套图中的原始八帧，多格姿势接近；单独修订遇到生图额度限制，尚未完成。",
+    "这次能验证导出流程复用，不能证明每个角色都能稳定生成与上一例相同的流畅程度。"
+  ]
+}

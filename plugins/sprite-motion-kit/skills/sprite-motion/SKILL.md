@@ -1,6 +1,6 @@
 ---
 name: sprite-motion
-description: Design custom game-character actions and body rigs from a user's request, render 3D mannequin key-pose references, generate matching character sprite frames with the host image tool, and export transparent atlases with synchronized visual review. Use for attacks, combos, locomotion, jumps, falls, monster actions or sprite-loop repairs; not generic video generation.
+description: Create game-character animations from custom 3D pose references or character-image-to-video generation, then export transparent sprite frames with synchronized visual review. Supports the user's MXAPI image and Seedance account, arbitrary actions, attacks, locomotion, jumps, falls and monster motions; not generic video generation.
 ---
 
 # Sprite Motion
@@ -9,7 +9,23 @@ The AI authors the motion; the local tool renders the reference and packages the
 
 Python 3.10+, Pillow and NumPy are required. Paths below are relative to this skill directory. No account, hosted model or paid credits are bundled. The host agent runs commands and uses its available image tool; the user should not have to write joint data or operate the CLI.
 
-## Default workflow: request to custom motion to character
+## Selected image-to-video route
+
+If the user selects video-first generation instead, follow [video samples](references/video-samples.md). For an existing MXAPI/MyPixelFlow account, use [MXAPI connection](references/mxapi-generation.md): `scripts/mxapi.py` provides real image/video submission, polling and media download. Reuse only the account the user selected; a working credential or available quota alone does not authorize an unrelated generation. Generate or obtain a real continuous action video, inspect a complete action interval, then use `scripts/video_sample.py` to extract it. Do not pretend old sprite playback is a newly generated video, infer smoothness from extraction tests, or revert to the rejected image-sheet route. The local extractor alone cannot generate a video; no credentials, model weights or credits are bundled.
+
+Keep this route for subsequent characters in the same project after the user selects
+it. Generate one complete character still or reuse the approved still, use its
+reachable image URL for the chosen video model, and extract the actual animation.
+Do not require a new mannequin, pose-sheet generation, local diffusion model or
+unrelated website subscription for this route. First validate the requested sample;
+an accepted raw video does not automatically approve every extracted frame or the
+entire roster. Keep an explicitly private repository private when updating it.
+
+## Alternative direct whole-sheet sample route
+
+When the user explicitly requests the direct host-image workflow demonstrated by a character sample, use [whole-sheet samples](references/whole-sheet-samples.md). This route generates complete action sheets, then uses `scripts/sheet_sample.py` for component-aware transparent extraction, fixed-coordinate export and an interactive review. It does not invent a 3D-reference review that did not happen, and it does not require returning to an unwanted experimental local model. Record all project-required actions before generating; the user's actual scope determines this sample's action set. A script pass is not art approval. Preserve the source, report extra generation calls and rate-limit failures, and await the requested user review before any game replacement. This is a distinct review-sample route, never a bypass that marks a production job or batch approved. All other requests continue through the custom-motion workflow below.
+
+## Custom 3D-reference workflow (when selected)
 
 Before posing, the AI must reason about this character's anatomy, apparent mass, balance, mobility, equipment and personality. Record that reasoning briefly in each action's description and turn it into actual keys. Walking and falling are families of motions, not universal clips: a nimble humanoid may have a lighter stride, an armored giant a wider weight transfer, and a heavy creature may buckle, brace, tip onto its flank and settle its tail. Decide which supports fail first and where the body ends up. Keep a full-size settled body for death. These are examples, not prescribed outcomes; infer suitable motions from the user's character and request.
 
@@ -53,6 +69,8 @@ Variations are authored by the AI, not randomly supplied by the renderer. Differ
 6. Open `JOB/review.html`. Reference and character share timing, with pause, slow playback, frame stepping and replay. Inspect motion and the loop seam, not just successful export. Report remaining visual defects. Attach each job to the batch, record actual exported-art review with current artifact hashes, and run `batch.py status` after each batch of work. Successful generation, reference review or packing is partial progress. **Run `batch.py finish` before claiming the requested set is complete or delivering it as a complete replacement.** It must reject missing or unreviewed actions. Partial previews are allowed when clearly labeled with missing actions; they do not shrink the requirement list. Integrate or publish generated assets only within the requested scope.
 
 ## Reuse and compatibility
+
+- When repairing repeated failures in visual-reference-only generation, distinguish the generation execution path from export checks. An optional [sequence-conditioned backend](references/conditioned-generation.md) converts reviewed imported 3D projections into actual control images and runs one temporally coupled inference call with a character identity adapter. Its first actual eight-frame trial failed visually with severe blur; do not recommend the locked model combination as a quality fix. It is experimental, requires explicitly selected local model files and an appropriate runtime, and never downloads weights or retries automatically. Preparing controls or passing adapter tests does not establish art quality. Do not silently switch models, override a no-generation instruction, or apply human OpenPose channels to nonhuman rigs. The existing host image tool remains the default unless this alternative is selected for the task.
 
 - An already authored/approved external 3D rig can enter the SAME job/review/pack workflow via `prepare --reference-bundle BUNDLE.json --character CHARACTER.png --out JOB`. Read [imported references](references/imported-references.md). This preserves the actual original mesh and animation instead of substituting a new procedural gait. Import all five base actions for a full character. The import copies and fingerprints guides, playback references and projected landmarks; reference review is still required before generation requests appear.
 - Declare one background mode at preparation for custom plans and imported references. Both default to `--background-mode magenta`: request a uniform #FF00FF key background and let `pack` export real RGBA transparency. This is color-key extraction, not a second generative redraw. If the character contains the key color, preparation rejects it; use genuine `alpha` instead. Never present a checkerboard image as transparent. Cell perimeters must actually be transparent after extraction. Explicit legacy jobs retain their background choice at pack time.
