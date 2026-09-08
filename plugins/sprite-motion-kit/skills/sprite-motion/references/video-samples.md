@@ -38,7 +38,8 @@ Before generating a full character, the AI follows [batch coverage](batch-covera
 inspect that project's state machine, controls, all abilities and weapons,
 damage/death/revival and interactions; record sources, derived requirements and
 explained exclusions. The AI writes the manifest, without asking the user to
-enumerate every action. Give different spells independent action IDs and reviews.
+enumerate every action. Under `body_actions_with_runtime_vfx`, retain each spell
+in the complete inventory and runtime mapping while reviewing each shared body once.
 Register all applicable states; a fixed five-action set cannot replace discovery.
 
 ```sh

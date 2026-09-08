@@ -13,15 +13,15 @@ For each character, record the sources inspected and the requirements derived fr
 - Hit reactions, knockdown/fall, fatal transition, persistent death state and revival/recovery paths.
 - Other interactions such as climbing, using objects, dialogue or idles when actually used.
 
-These are discovery areas, not a fixed animation list. An area with no applicable behavior still needs an inspected source/search reference and an explanation. Record non-applicable discovered requirements with an explicit exclusion reason; do not silently omit them. Distinguish a recoverable knockdown from the fatal transition and settled death pose when the game distinguishes them; describe how the relevant states connect. Combine multiple source references for one actual behavior rather than inventing duplicate requirements. Different spells are separate gameplay requirements and must receive independent action IDs and reviews.
+These are discovery areas, not a fixed animation list. An area with no applicable behavior still needs an inspected source/search reference and an explanation. Record non-applicable discovered requirements with an explicit exclusion reason; do not silently omit them. Distinguish a recoverable knockdown from the fatal transition and settled death pose when the game distinguishes them; describe how the relevant states connect. Combine multiple source references for one actual behavior rather than inventing duplicate requirements. Different spells remain distinct gameplay inventory entries. When the user selects `body_actions_with_runtime_vfx`, they can map to a shared body animation and do not require independent media or duplicate reviews.
 
 The script validates the AI's recorded inventory and its execution coverage. It does not infer every requirement from arbitrary game code or prove that the host inspected all files. Use real file locations, stable state/ability/weapon IDs and concrete observations. Requirements discovered later require a revised explicit batch, preserving the prior scope as history.
 
 ## AI-authored schema-2 scope
 
-`full_character` means all applicable requirements found for that character in this project. The tool does not inject walk/run/attack/death/jump or any other universal list. `action_map` must cover every applicable requirement exactly, and every mapped value must be a distinct action ID. Optional `required_actions` must equal the mapped set; omitting it derives the set without dropping requirements.
+`full_character` means all applicable requirements found for that character in this project. The tool does not inject a universal animation list. `motion_strategy` selects `independent_actions` (the historical default) or [body_actions_with_runtime_vfx](body-actions-runtime-vfx.md). In the shared strategy, each requirement is one body action with `covered_game_ids`, while the full `gameplay_inventory` and `runtime_mappings` preserve all skills. `action_map` maps each body requirement once; many runtime skill mappings may reference that same action. Optional `required_actions` equals the unique body-action set. One body export and review can therefore cover multiple mapped skills without renamed copies.
 
-The following example illustrates the shape; replace every source, ID and finding with the selected project's actual evidence:
+The following historical independent-action example illustrates the base shape. Use the linked body/runtime strategy when the user chooses reuse. Replace sources, IDs and findings with actual project evidence:
 
 ```json
 {
@@ -84,7 +84,7 @@ python scripts/batch.py attach-video --batch BATCH --character spellcaster \
 
 Timing, origin and key scope above are examples requiring inspection. Keep full shared canvases, actual source order and the source video. Use `--loop` only for an inspected full cycle; a cast commonly ends after its release/recovery. Default key scope protects internal key colors; `all` requires checking that those colors are not part of the character.
 
-Repeat for every missing requirement, including the second spell. One clip remains `scope_mode: action_study` even when bound to a larger batch. An unbound old sample has no frozen gameplay/character identity and cannot simply be marked accepted: bind by re-extracting the inspected source into a new sample. This is local extraction, not permission for another paid generation.
+Repeat for every missing body action under the shared strategy, not every mapped skill. A second spell still needs its own complete runtime mapping, but can reuse the same reviewed cast body. One clip remains `scope_mode: action_study` even when bound to a larger batch. An unbound old sample cannot simply be marked accepted: re-extract the inspected source with the new binding. This is local work, not permission for another paid generation.
 
 Custom 3D jobs continue using `batch.py attach --batch BATCH --character ID --job JOB`. Their existing pose/reference/preflight checks remain required. Both routes share the same inventory and visual-review finish gate. Separate actions cannot use the same source-video interval or identical exported pixel sequence under renamed IDs; different intervals of a long video are allowed when actually distinct. Re-encoded or perceptually similar motions still require human/AI visual judgment.
 
@@ -114,6 +114,6 @@ python scripts/batch.py review --batch BATCH --character spellcaster --action ca
 python scripts/batch.py finish --batch BATCH
 ```
 
-`finish` fails while any applicable discovered requirement has no valid current export or review. Missing the second spell or an applicable base state cannot be hidden by finishing the first. `status` rechecks stored review flags, notes, bindings and artifact hashes; source, frame, atlas, appearance or manifest changes invalidate review. Video evidence checks actual PNG/alpha/shared canvas and matching atlas pixels; it does not recertify animation naturalness.
+`finish` fails while any required body action lacks a valid current export/review. Under the shared strategy, omitted skills, runtime events or VFX mappings fail scope validation; a shared review must also pass `body_motion_only`, `runtime_vfx_separate` and `all_gameplay_mappings_preserved`. Review each body once, never manufacture per-skill reviews of the same pixels. `status` rechecks flags, notes, bindings and artifact hashes; changed artifacts invalidate review. Pixel checks do not certify animation naturalness or prove the game runtime integration works.
 
 `scope_complete` means this declared scope has current reviews. `complete` and `full_character_complete` are true only for a schema-2 full-character scope. `study_complete` may be true while both full-character flags remain false. `completion_current` indicates that the completion snapshot still matches current reviews and artifacts; always rerun status/finish before delivery. Technical completion is never permission to overwrite game assets or substitute for user approval explicitly requested in the conversation.

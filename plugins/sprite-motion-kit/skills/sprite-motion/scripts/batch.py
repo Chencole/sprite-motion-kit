@@ -16,6 +16,87 @@ WORKFLOW_VIDEO_CHECKS = [
     'ordered_phases_and_game_event', 'loop_or_one_shot_endpoint',
     'full_interval_framing',
 ]
+BODY_RUNTIME_STRATEGY = 'body_actions_with_runtime_vfx'
+BODY_RUNTIME_CHECKS = ['body_motion_only', 'runtime_vfx_separate', 'all_gameplay_mappings_preserved']
+RUNTIME_VFX_FORBIDDEN = [
+    'runtime_vfx', 'projectiles', 'beams', 'particles', 'trails', 'impact_flashes',
+    'explosions', 'auras', 'glows', 'smoke', 'sparks', 'spell_symbols',
+    'magic_shields', 'elemental_effects', 'summoned_objects', 'screen_effects',
+]
+
+
+def validate_body_effects(effects):
+    if (not isinstance(effects, dict) or effects.get('allowed') != []
+            or effects.get('allow_unlisted') is not False):
+        raise ValueError('Body-only effects must have allowed=[] and allow_unlisted=false')
+    forbidden = effects.get('forbidden')
+    if (not isinstance(forbidden, list) or any(not isinstance(value, str) or not value.strip() for value in forbidden)
+            or not set(RUNTIME_VFX_FORBIDDEN).issubset(forbidden)):
+        raise ValueError('Body-only effects.forbidden must include every runtime VFX category')
+
+
+def validate_body_runtime_mapping(entry):
+    """Many gameplay skills share one reviewed body action, with exact inventory coverage."""
+    validate_body_effects(entry.get('effects'))
+    inventory = entry.get('gameplay_inventory')
+    if not isinstance(inventory, list) or not inventory:
+        raise ValueError('Body-action strategy needs the complete gameplay_inventory')
+    known, applicable = set(), {}
+    for item in inventory:
+        if not isinstance(item, dict):
+            raise ValueError('Gameplay inventory entries must be objects')
+        for key in ('game_id', 'source', 'purpose'):
+            motion.require_text(item.get(key), 'Gameplay inventory needs ' + key)
+        game_id = item['game_id']
+        if game_id in known:
+            raise ValueError('Gameplay inventory game_ids must be unique')
+        known.add(game_id)
+        if item.get('kind') not in ('action', 'ability', 'weapon', 'interaction') or type(item.get('applicable')) is not bool:
+            raise ValueError('Gameplay inventory needs an explicit kind and applicability')
+        if item['applicable']:
+            applicable[game_id] = item
+        else:
+            motion.require_text(item.get('exclusion_reason'), 'Excluded gameplay needs an explicit reason')
+    bodies, covered = {}, {}
+    for requirement in entry['requirements']:
+        if not requirement['applicable']:
+            continue
+        action = entry['action_map'][requirement['id']]
+        kind = requirement.get('body_action_kind')
+        if kind not in ('attack', 'cast', 'locomotion', 'reaction', 'death', 'interaction', 'idle', 'other'):
+            raise ValueError('Every body requirement needs an explicit body_action_kind')
+        ids = requirement.get('covered_game_ids')
+        if not isinstance(ids, list) or not ids or any(not isinstance(value, str) for value in ids):
+            raise ValueError('Body requirements need nonempty covered_game_ids')
+        for game_id in ids:
+            if game_id not in applicable or game_id in covered:
+                raise ValueError('covered_game_ids must partition the applicable gameplay inventory exactly')
+            if applicable[game_id]['kind'] in ('ability', 'weapon') and kind not in ('attack', 'cast'):
+                raise ValueError('Ability/weapon gameplay must map to a counted attack or cast body action')
+            covered[game_id] = action
+        bodies[action] = kind
+    if set(covered) != set(applicable):
+        raise ValueError('Body actions omit applicable gameplay inventory entries')
+    combat_count = sum(kind in ('attack', 'cast') for kind in bodies.values())
+    if combat_count > 3 or (any(item['kind'] in ('ability', 'weapon') for item in applicable.values()) and combat_count < 1):
+        raise ValueError('Each combat character needs 1 to 3 attack/cast body actions')
+    mappings = entry.get('runtime_mappings')
+    if not isinstance(mappings, list):
+        raise ValueError('Explicit runtime_mappings are required')
+    mapped = set()
+    for item in mappings:
+        if not isinstance(item, dict) or not isinstance(item.get('game_id'), str):
+            raise ValueError('Runtime mappings must identify a game_id')
+        game_id = item['game_id']
+        if game_id not in covered or game_id in mapped or item.get('body_action') != covered[game_id]:
+            raise ValueError('Runtime mappings must match every covered game_id and body_action exactly once')
+        motion.require_text(item.get('game_event'), 'Runtime mapping needs the existing gameplay event/dispatcher')
+        vfx = item.get('runtime_vfx')
+        if not isinstance(vfx, list) or any(not isinstance(value, str) or not value.strip() for value in vfx):
+            raise ValueError('runtime_vfx must explicitly list runtime effect IDs, or [] for none')
+        mapped.add(game_id)
+    if mapped != set(applicable):
+        raise ValueError('Runtime mappings omit applicable gameplay inventory entries')
 
 
 def digest(path):
@@ -32,6 +113,9 @@ def validate_scope(scope):
         raise ValueError('Scope mode must be full_character or action_study')
     if mode == 'action_study':
         motion.require_text(scope.get('study_reason'), 'An action study needs an explicit reason; it is not a complete character')
+    strategy = scope.get('motion_strategy', 'independent_actions')
+    if strategy not in ('independent_actions', BODY_RUNTIME_STRATEGY):
+        raise ValueError('Unknown motion_strategy')
     characters = scope.get('characters')
     if not isinstance(characters, dict) or not characters:
         raise ValueError('Explicit character/action coverage is required')
@@ -79,11 +163,13 @@ def validate_scope(scope):
         if any(not isinstance(a, str) or not re.fullmatch(r'[a-z][a-z0-9_-]{0,63}', a) for a in actions):
             raise ValueError('Invalid action ID')
         if len(set(actions)) != len(actions):
-            raise ValueError('Different gameplay requirements need independent action IDs; a generic action cannot replace multiple abilities')
+            raise ValueError('Requirements need independent action IDs; for shared skills use body requirements and runtime_mappings')
         declared = entry.get('required_actions', actions)
         if not isinstance(declared, list) or any(not isinstance(a, str) for a in declared) or len(declared) != len(actions) or set(declared) != set(actions):
             raise ValueError('Required actions must exactly cover the discovered gameplay mapping')
         entry['required_actions'] = declared
+        if strategy == BODY_RUNTIME_STRATEGY:
+            validate_body_runtime_mapping(entry)
 
 
 def create(spec, out):
@@ -133,7 +219,13 @@ def binding(batch, character, action):
         raise ValueError('Action is not required for this character')
     requirement_id = next(key for key, value in entry['action_map'].items() if value == action)
     requirement = next(r for r in entry['requirements'] if r['id'] == requirement_id)
-    return {'scope_sha256': data['scope_sha256'], 'character': character, 'action': action, 'requirement': requirement}
+    result = {'scope_sha256': data['scope_sha256'], 'character': character, 'action': action, 'requirement': requirement}
+    if scope.get('motion_strategy') == BODY_RUNTIME_STRATEGY:
+        result.update(motion_strategy=BODY_RUNTIME_STRATEGY,
+                      covered_game_ids=requirement['covered_game_ids'],
+                      runtime_mappings=[item for item in entry['runtime_mappings'] if item['body_action'] == action],
+                      effects_policy=entry['effects'])
+    return result
 
 
 def attach(batch, character, job):
@@ -420,6 +512,8 @@ def check_review(report, hashes, expected_binding, is_video, workflow_design_sha
     if expected_binding and report.get('coverage_binding') != expected_binding:
         raise ValueError('Review must identify the exact gameplay requirement binding')
     checks = VISUAL_CHECKS + (['source_video', 'ability_or_weapon_match'] if is_video else [])
+    if expected_binding and expected_binding.get('motion_strategy') == BODY_RUNTIME_STRATEGY:
+        checks += BODY_RUNTIME_CHECKS
     if workflow_design_sha256:
         checks += WORKFLOW_VIDEO_CHECKS
         if report.get('action_design_sha256') != workflow_design_sha256:
@@ -496,6 +590,7 @@ def status(batch):
     return {'complete': full_complete, 'scope_complete': scope_complete, 'full_character_complete': full_complete,
             'study_complete': scope_complete and mode == 'action_study', 'scope_mode': mode,
             'delivery_kind': mode, 'coverage_schema': data['schema'], 'reviewed': ready,
+            'motion_strategy': scope.get('motion_strategy', 'independent_actions'),
             'required': len(entries), 'actions': entries, 'evidence_sha256': evidence_hash,
             'completion_current': scope_complete and snapshot.get('scope_sha256') == data['scope_sha256']
                                   and snapshot.get('evidence_sha256') == evidence_hash}

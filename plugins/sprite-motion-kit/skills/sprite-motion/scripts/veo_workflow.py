@@ -160,6 +160,8 @@ def validate_design(design, expected_binding=None):
     if not isinstance(effects.get('allowed'), list) or not isinstance(effects.get('forbidden'), list):
         raise ValueError('Effects allowed/forbidden must be lists')
     _texts(effects.get('forbidden'), 'forbidden effects')
+    if binding.get('motion_strategy') == coverage.BODY_RUNTIME_STRATEGY:
+        coverage.validate_body_effects(effects)
     framing = design.get('framing')
     if not isinstance(framing, dict):
         raise ValueError('Framing must describe the complete action envelope')
@@ -229,6 +231,8 @@ def scaffold(batch_path, character, action, out):
                     'motion_envelope': {'top': '', 'front': '', 'back': '', 'bottom': ''}},
         'complete_cycles': None, 'loop_compatibility': None, 'recovery_or_hold': '',
     }
+    if expected.get('motion_strategy') == coverage.BODY_RUNTIME_STRATEGY:
+        data['effects'] = dict(expected['effects_policy'])
     out = Path(out).resolve()
     if out.exists():
         raise ValueError('Design file already exists')
@@ -295,6 +299,10 @@ def prompts(design):
         f"Allowed effects: {allowed}. Forbidden effects: {forbidden}. Do not invent any unlisted effect, prop, weapon, target or costume change. "
         'Preserve crisp pixel-art edges and temporal identity. No cuts, zoom, viewpoint turns, motion blur or perspective drift.'
     )
+    if design['coverage_binding'].get('motion_strategy') == coverage.BODY_RUNTIME_STRATEGY:
+        video += (' Body motion only. Multiple gameplay skills reuse this single animation. '
+                  'The game separately dispatches damage, combo events and every runtime visual effect. '
+                  'Do not render projectiles, elemental effects, weapon trails, particles or spell effects into the video.')
     return {'still_prompt': still, 'video_prompt': video}
 
 

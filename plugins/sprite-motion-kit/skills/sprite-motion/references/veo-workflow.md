@@ -162,9 +162,13 @@ its own state and gameplay event. Illegal jumps are rejected. Examples include:
 - creature attack: `natural → attack → natural`, using its actual jaws, claws,
   wings or other anatomy.
 
-Different spells and attacks remain different coverage actions even when they
-share a stance. Their ordered phases, release/contact event and allowed effects
-must match the actual ability. A renamed generic clip cannot satisfy both.
+Different spells and attacks remain distinct gameplay inventory entries. With
+`body_actions_with_runtime_vfx`, several can reuse one authored body action and
+one review through explicit runtime mappings. Preserve every skill's game event,
+damage/combo dispatch and runtime VFX; do not bake those effects into the video.
+This strategy caps attack/cast bodies at three per character and requires empty
+`effects.allowed` plus the complete forbidden categories from the coverage policy.
+Renaming a duplicate export to pretend it is a different body action remains invalid.
 
 For loops, the design requires compatible equipment state, hand occupancy,
 facing, scale and velocity at the seam, while the final exported frame remains

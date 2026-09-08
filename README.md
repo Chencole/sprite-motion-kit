@@ -55,6 +55,12 @@ action-specific first frame is selected, its visual review remains required. Ide
 start-still reviews, Veo jobs and extracted MP4 frames remain hash-linked to the
 same coverage requirement. See the [Veo workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/veo-workflow.md).
 
+The explicit [body-actions/runtime-VFX strategy](plugins/sprite-motion-kit/skills/sprite-motion/references/body-actions-runtime-vfx.md)
+lets multiple skills share one reviewed body animation. It preserves the complete
+gameplay inventory and every skill's runtime event/effect mapping, limits each
+combat character to 1-3 attack/cast bodies, and forbids baked VFX in those clips.
+It does not generate separate images/videos or duplicate reviews for each skill.
+
 The reusable [whole-sheet sample workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/whole-sheet-samples.md)
 now packages the direct host-image approach: a complete generated character sheet,
 component-aware transparent extraction, common coordinates and a browser reviewer.

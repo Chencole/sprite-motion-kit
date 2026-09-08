@@ -137,6 +137,9 @@ def validate_generation_job(generation_job, video, expected_binding=None):
         raise ValueError('Veo action design changed or does not match its gameplay binding')
     if design.get('action_kind') not in ('loop', 'one_shot'):
         raise ValueError('Veo action design must specify loop or one_shot')
+    if binding.get('motion_strategy') == 'body_actions_with_runtime_vfx':
+        import batch as coverage_module
+        coverage_module.validate_body_effects(design.get('effects'))
     result = _local_result(job, state)
     source_sha = hashlib.sha256(Path(video).read_bytes()).hexdigest()
     if hashlib.sha256(result.read_bytes()).hexdigest() != source_sha:

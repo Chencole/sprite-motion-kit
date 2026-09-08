@@ -16,9 +16,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-VIEW_VERSION = '3.1'
+VIEW_VERSION = '3.4'
 MEDIA = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm'}
-NAMES = {'job.json', 'sample.json', 'batch.json', 'scope.json', 'motion-coverage.json', 'action-design.json', 'comparison.json', 'production-status.json', 'queue.json'}
+NAMES = {'job.json', 'sample.json', 'batch.json', 'scope.json', 'motion-coverage.json', 'action-design.json', 'comparison.json', 'production-status.json', 'queue.json', 'body-motion-v3-fullqueue.json', 'body-motion-v3-r2-fullqueue.json'}
 SKIP = {'.git', 'node_modules', '__pycache__', '.venv', 'config', 'configs', 'db', 'database', 'secrets'}
 LABELS = ['原画设计', '首帧提交', '首帧审核', 'Veo 生成', '透明抽帧', 'Review', '游戏接入']
 
@@ -68,8 +68,9 @@ def mapping(value):
 
 
 class Evidence:
-    def __init__(self, roots, coverage, media_roots):
+    def __init__(self, roots, coverage, media_roots, scope_policy=None):
         self.roots, self.coverage = roots, coverage
+        self.scope_policy = scope_policy
         self.allowed = list(dict.fromkeys(roots + media_roots + [p.parent for p in coverage]))
         self.lock = threading.Lock()
         self.files, self.digests = {}, {}
@@ -145,6 +146,30 @@ class Evidence:
                     docs[p] = d
                 else:
                     warnings.append('覆盖清单写入中或不可读；未据此声明全覆盖。')
+        current_scopes = {}
+        current_scope_hashes = set()
+        if self.scope_policy:
+            for parent in {p.parent for p in self.coverage}:
+                for candidate in parent.iterdir():
+                    if candidate.name not in {self.scope_policy + '-spec.json', self.scope_policy + '-batch'}:
+                        continue
+                    paths = [candidate] if candidate.is_file() else [candidate / 'scope.json', candidate / 'batch.json']
+                    for source in paths:
+                        if source.suffix.lower() != '.json' or not self.permitted(source.resolve()):
+                            continue
+                        definition = read(source)
+                        if definition is None:
+                            continue
+                        current_scopes[source] = definition
+                        if source.name == 'scope.json':
+                            current_scope_hashes.add(self.digest(source))
+                        if isinstance(definition.get('scope_sha256'), str):
+                            current_scope_hashes.add(definition['scope_sha256'])
+            sources = [s for s in sources if s['kind'] != '全角色覆盖']
+            sources.append({'name': self.scope_policy, 'exists': bool(current_scopes), 'kind': '当前全目标'})
+            if not current_scopes:
+                warnings.append(self.scope_policy + ' 新目标清单尚未落地；旧未提交队列已被替代，不再计作待办。')
+            docs.update(current_scopes)
         items = {}
         coverage_summary = {}
 
@@ -245,7 +270,14 @@ class Evidence:
 
         queued_jobs = {}
         for p, d in docs.items():
-            if p.name != 'queue.json':
+            if p.name not in {'queue.json', 'body-motion-v3-fullqueue.json', 'body-motion-v3-r2-fullqueue.json'}:
+                continue
+            if self.scope_policy and 'batch-01' in p.parts:
+                continue
+            if self.scope_policy and p.name.endswith('-fullqueue.json') and p.name != self.scope_policy + '-fullqueue.json':
+                continue
+            if self.scope_policy and p.name.endswith('-fullqueue.json') and d.get('scope_sha256') not in current_scope_hashes:
+                warnings.append('v3 队列与当前 scope 指纹不匹配，等待生产者更新。')
                 continue
             entries = d.get('items', d.get('jobs', d.get('tasks', d.get('queue', []))))
             if isinstance(entries, dict):
@@ -263,14 +295,26 @@ class Evidence:
                 item = row(cid, aid)
                 item['mode'] = 'existing_image'
                 item['queued'] = True
+                item['current_queue'] = p.name == (self.scope_policy or 'body-motion-v3') + '-fullqueue.json'
+                item['queue_state'] = safe(entry.get('state', 'planned'))
                 evidence(item, p)
-                for field in ('character_reference', 'existing_image', 'reference_image', 'image', 'source_image'):
+                for field in ('character_png', 'character_reference', 'existing_image', 'reference_image', 'image', 'source_image'):
                     url = self.media(entry.get(field), p, registry)
                     if url:
                         item['media']['art'] = url
                         stage(item, 0, 'recorded', '已有游戏角色原画')
                         break
                 stage(item, 3, 'pending', '已排入本轮队列 · 尚无提交证据')
+                if item['current_queue']:
+                    queue_state = entry.get('state')
+                    if queue_state == 'reconciliation_hold':
+                        stage(item, 3, 'waiting', '历史回执待核对 · 暂停新提交')
+                    elif queue_state == 'reuse_candidate_review_before_generation':
+                        stage(item, 3, 'pending', '候选视频待无 VFX 审核 · 未新提交')
+                        stage(item, 5, 'waiting', '本体复用审核未完成')
+                    elif queue_state == 'reuse_completed_local_rebind':
+                        item['notes'].append('v3 队列：已有完成视频，保留活动预览；新 scope 本地绑定待核验。')
+                    item['notes'].append('当前队列状态：' + item['queue_state'])
                 for field in ('job', 'job_dir', 'job_path', 'generation_job', 'video_job'):
                     value = entry.get(field)
                     if isinstance(value, str) and not re.search(r'://|^\\\\|^//', value):
@@ -319,12 +363,19 @@ class Evidence:
             if not (cid and aid) and p.parent.resolve() in queued_jobs:
                 cid, aid = queued_jobs[p.parent.resolve()]
             group = 'production' if cid and aid else 'unbound'
+            binding = (design or workflow or d).get('coverage_binding') or {}
+            if self.scope_policy and cid and aid and (cid, aid) != ('human-0', 'walk') and binding.get('scope_sha256') not in current_scope_hashes:
+                group = 'unbound'
             if not (cid and aid):
                 cid, aid = '未绑定试样', p.parent.name
             item = row(cid, aid, group)
             if workflow.get('mode') == 'existing_image' or packet.get('mode') == 'existing_image':
                 item['mode'] = 'existing_image'
             evidence(item, p)
+            cost = d.get('provider_points_cost', d.get('points_cost'))
+            if isinstance(cost, (int, float)) and not isinstance(cost, bool):
+                item['cost_points'] = cost
+                item['notes'].append('任务实际记录费用：' + str(cost) + ' points')
             state = str(d.get('state', d.get('status', 'unknown'))).lower()
             phase = workflow.get('phase', '')
             kind = packet.get('kind', d.get('kind', ''))
@@ -440,7 +491,12 @@ class Evidence:
                 if identity in seen:
                     continue
                 seen.add(identity)
-                item = row(cid, aid) if cid else jobs_by_digest.get(source_hash)
+                item = jobs_by_digest.get(source_hash)
+                if item is None and cid:
+                    sample_group = 'production'
+                    if self.scope_policy and (cid, aid) != ('human-0', 'walk') and (d.get('coverage_binding') or {}).get('scope_sha256') not in current_scope_hashes:
+                        sample_group = 'unbound'
+                    item = row(cid, aid, sample_group)
                 if item is None:
                     item = row(d.get('character', '未绑定试样'), aid, 'unbound')
                 if item.get('current_video_attempt') and item.get('current_video_sha256') != source_hash:
@@ -488,6 +544,8 @@ class Evidence:
                         item['notes'].append('动作设计状态：' + safe(status, 80))
             if p.name != 'batch.json':
                 continue
+            if self.scope_policy and d.get('scope_sha256') not in current_scope_hashes:
+                continue
             for cid, actions in mapping(d.get('reviews', {})):
                 for aid, report in mapping(actions):
                     if not isinstance(report, dict):
@@ -498,16 +556,91 @@ class Evidence:
                     evidence(item, p)
 
         values = list(items.values())
+        if self.scope_policy:
+            old_art = {v['character']: v['media']['art'] for v in values if v['media'].get('art')}
+            old_aliases = {v['character']: v.get('aliases', []) for v in values if v.get('aliases')}
+            wanted = {}
+            coverage_summary = {}
+            for p, definition in current_scopes.items():
+                scope = definition.get('batch_spec') if isinstance(definition.get('batch_spec'), dict) else definition
+                for cid, character in mapping(scope.get('characters', {})):
+                    if not isinstance(character, dict):
+                        continue
+                    actions = character.get('required_actions') or list((character.get('action_map') or {}).values()) or character.get('actions', [])
+                    if isinstance(actions, dict):
+                        actions = list(actions)
+                    for action in actions:
+                        aid = action.get('id', action.get('action_id', action.get('name'))) if isinstance(action, dict) else action
+                        if not aid:
+                            continue
+                        item = row(cid, aid)
+                        if not item.get('video_job') and not item.get('current_queue') and (str(cid), str(aid)) != ('human-0', 'walk'):
+                            item['notes'] = []
+                            item['evidence'] = []
+                            item['stages'] = [{'state': 'pending', 'text': '未提交 / 无记录'} for _ in LABELS]
+                        item['scope_revision'] = self.scope_policy
+                        item['mode'] = 'existing_image'
+                        item['name'] = safe(character.get('name', cid))
+                        item['aliases'] = old_aliases.get(cid, [])
+                        evidence(item, p)
+                        art = self.media(character.get('character', character.get('reference_image')), p, registry) or old_art.get(cid)
+                        if art:
+                            item['media']['art'] = art
+                            stage(item, 0, 'recorded', '复用已有角色原画')
+                        wanted[(str(cid), str(aid))] = item
+            retained = []
+            for item in values:
+                pair = (item['character'], item['action'])
+                if pair == ('human-0', 'walk') and item['media'].get('frames'):
+                    item['active'] = True
+                    item['accepted_baseline'] = True
+                    item['notes'].append('用户已认可并保留的原 human walk 透明动画。')
+                    if pair not in wanted:
+                        retained.append(item)
+                    continue
+                if item['group'] == 'production':
+                    continue
+                if not (item['media'].get('video') or item['media'].get('frames') or (item.get('video_job') or {}).get('state') == 'submission_unknown'):
+                    continue
+                item['scope_revision'] = 'superseded-history'
+                if old_art.get(item['character']):
+                    item['media'].setdefault('art', old_art[item['character']])
+                item['active'] = False
+                item['queued'] = False
+                item['notes'].append('历史素材 / 待本体复用：未认定符合 body-motion-v3；技能 VFX 由游戏运行时实现。')
+                retained.append(item)
+            values = list(wanted.values()) + retained
+            coverage_summary = {'batch_action_tasks': len(wanted), 'batch_characters': len({cid for cid, _ in wanted})}
+        # Read the explicit integration receipt, not the game's config or registry.
+        for parent in {p.parent for p in self.coverage}:
+            receipt_path = parent / 'human-0-walk-integration.json'
+            receipt = read(receipt_path)
+            if not receipt or receipt.get('character') != 'human-0' or receipt.get('action') != 'walk':
+                continue
+            for item in values:
+                if item['group'] != 'production' or (item['character'], item['action']) != ('human-0', 'walk'):
+                    continue
+                if (receipt.get('user_source_accepted') is True
+                        and receipt.get('source_video_sha256') == item.get('current_video_sha256')
+                        and receipt.get('count') == len(item['media'].get('frames', []))
+                        and receipt.get('count', 0) > 0
+                        and receipt.get('lossless_pixels') is True
+                        and receipt.get('registry') and receipt.get('atlas_sha256')):
+                    item['integration'] = {'accepted': True, 'recorded': True, 'frames': receipt['count'], 'lossless_pixels': True}
+                    item['completed_baseline'] = True
+                    stage(item, 5, 'done', '用户已批准原视频与透明动画')
+                    stage(item, 6, 'done', '接入凭据记录已写入 motion.json · 无损共享裁剪')
+                    evidence(item, receipt_path)
         for item in values:
             if item['group'] == 'production' and not item.get('current_still_attempt'):
                 item.setdefault('mode', 'existing_image')
             item['notes'] = list(dict.fromkeys(item['notes']))
             states = [s['state'] for s in item['stages']]
-            item['status'] = 'failed' if 'failed' in states else ('waiting' if 'waiting' in states else 'pending')
+            item['status'] = 'completed' if item.get('completed_baseline') else ('failed' if 'failed' in states else ('waiting' if 'waiting' in states else 'pending'))
         values.sort(key=lambda v: (not v.get('active', False), v['group'] != 'production', v['character'], v['action']))
-        snapshot = {'schema_version': 1, 'ui_version': VIEW_VERSION, 'items': values, 'sources': sources, 'warnings': list(dict.fromkeys(warnings)), 'labels': LABELS,
+        snapshot = {'schema_version': 1, 'ui_version': VIEW_VERSION, 'scope_revision': self.scope_policy, 'items': values, 'sources': sources, 'warnings': list(dict.fromkeys(warnings)), 'labels': LABELS,
                     'updated_at': datetime.now(timezone.utc).isoformat(), 'poll_seconds': 3, 'coverage_summary': coverage_summary,
-                    'counts': {'actions': len(values), 'production': sum(v['group'] == 'production' for v in values), 'failed': sum(v['status'] == 'failed' for v in values)}}
+                    'counts': {'actions': len(values), 'production': sum(v['group'] == 'production' and (not v.get('accepted_baseline') or v.get('scope_revision') == self.scope_policy) for v in values), 'failed': sum(v['status'] == 'failed' for v in values)}}
         with self.lock:
             self.files, self.snapshot = registry, snapshot
 
@@ -521,13 +654,14 @@ class Evidence:
             time.sleep(3)
 
 
-PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="progress-view-version" content="3.1"><title>实时原画与生成预览 · v3.1</title>
+PAGE = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="progress-view-version" content="3.4"><title>实时原画与生成预览 · v3.4</title>
 <style>
 :root{color-scheme:dark;font:14px/1.5 "Microsoft YaHei",sans-serif;background:#10161d;color:#e5ecf1}*{box-sizing:border-box}body{margin:0}main{max-width:1320px;margin:auto;padding:10px 16px}header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}h1{font-size:16px;margin:0}h2{font-size:17px;margin:0}h3{font-size:14px;margin:0}p{margin:6px 0}.muted{font-size:12px;color:#a5b9c5}.version{font:11px monospace;color:#a5cfbd}button,select,input{font:inherit;color:#e5ecf1;background:#213440;border:1px solid #4b626e;border-radius:6px;padding:7px 10px;min-width:0}button{cursor:pointer}button:hover{border-color:#a0d5b7}:focus-visible{outline:2px solid #9bd7be;outline-offset:2px}a{color:#ddcb99}.hero{background:#17232d;border:1px solid #3b505d;border-radius:9px;overflow:hidden}.herohead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 12px}.herohead select{max-width:50%;font-size:12px}.media{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;background:#344651}.panel{min-width:0;background:#17232d}.label{display:flex;align-items:center;justify-content:space-between;font-size:12px;padding:5px 9px;color:#c3d3df}.stage{height:250px;display:grid;place-items:center;position:relative;overflow:hidden;background-color:#253139;background-image:linear-gradient(45deg,#35434b 25%,transparent 25%),linear-gradient(-45deg,#35434b 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#35434b 75%),linear-gradient(-45deg,transparent 75%,#35434b 75%);background-size:20px 20px;background-position:0 0,0 10px,10px -10px,-10px 0}.stage img,.stage video{width:100%;height:100%;object-fit:contain;position:absolute}.stage img{image-rendering:auto}.empty{color:#a1b5bf;font-size:13px;text-align:center;padding:18px}.compact{display:flex;gap:6px;flex-wrap:wrap;padding:10px}.tag{font-size:11px;padding:4px 7px;background:#111d25;border:1px solid #3f5663;border-radius:5px}.done{color:#a8dfc1;border-color:#447b61}.waiting{color:#e7cd92;border-color:#887a50}.failed{color:#efb1a6;border-color:#9c675f}.recorded{color:#bbd5ec}.controls{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:7px;font-size:11px}.controls button,.controls select{font-size:11px;padding:4px 7px}.controls input{flex:1;min-width:70px;max-width:200px}.evidence{padding:0 12px 10px;font-size:12px;color:#b9c9d3;overflow-wrap:anywhere}details{margin:5px 0}summary{cursor:pointer;color:#cfddd9}.history-entry{padding:8px 0;border-top:1px solid #344651}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0 8px}.toolbar input{flex:1;min-width:150px}.summary{font-size:12px;color:#adccbd;margin:8px 0}.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}.character{padding:0;overflow:hidden;text-align:left;background:#18242e;border:1px solid #3b4f5c;border-radius:8px}.character[aria-expanded=true]{border:2px solid #92d0b1}.portrait{height:160px;position:relative;background:radial-gradient(ellipse at 50% 70%,#365348,#15232c 75%)}.portrait img{width:100%;height:100%;object-fit:contain}.character .caption{display:block;padding:8px 10px}.caption strong,.caption small{display:block}.caption small{font-size:11px;color:#a4b9c5}.character-actions{margin:12px 0;border:1px solid #38515e;border-radius:8px;padding:12px;background:#17242e}.actions-head{display:flex;align-items:center;justify-content:space-between;gap:8px}.actions-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin-top:10px}.action-button{text-align:left;font-size:12px;overflow-wrap:anywhere}.action-button small{display:block;color:#adc2ce;font-size:11px}.action-detail{margin-top:10px}.alert{font-size:12px;color:#e3bf96}footer{margin-top:18px;border-top:1px solid #324651;padding:10px 0;font-size:11px;color:#8fa8b7}.statusline{font-size:11px;color:#b3cabf}.lightbox{background:#111b23;color:#e5ecf1;border:1px solid #698274;border-radius:9px;max-width:96vw;width:1000px;padding:10px}.lightbox::backdrop{background:#000b}.lightbox img{display:block;width:100%;max-height:80vh;object-fit:contain}.lightbox button{float:right}.notice{padding:6px 10px;font-size:12px;color:#adc0cd}#more{margin-top:8px}@media(max-width:650px){main{padding:7px 9px}h1{font-size:14px}.herohead{padding:6px 9px}h2{font-size:15px}.herohead select{max-width:47%}.media{grid-template-columns:1fr 1fr}.stage{height:185px}.hero .media>.panel:first-child:nth-last-child(2),.hero .media>.panel:first-child:nth-last-child(2)~.panel{min-width:0}.gallery{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.portrait{height:150px}.actions-list{grid-template-columns:repeat(2,minmax(0,1fr))}.statusline{max-width:45%;text-align:right;font-size:10px}.compact{padding:7px;gap:4px}.tag{font-size:10px}.toolbar{gap:6px}.toolbar select{max-width:52%;font-size:12px}}@media(max-width:430px){.media{grid-template-columns:1fr}.stage{height:170px}.herohead select{font-size:10px;padding:5px}.label{padding:3px 8px}.hero .media>.panel:nth-child(n+3) .stage{height:190px}}
 #live-jobs{margin-bottom:8px}.live-count{font-size:12px;color:#b9dfc9;margin:4px 0}.live-strip{display:flex;gap:6px;overflow-x:auto;padding-bottom:5px}.live-task{flex:0 0 170px;display:flex;gap:7px;align-items:center;text-align:left;padding:5px;font-size:11px}.live-task img{width:35px;height:48px;object-fit:contain}.live-task strong,.live-task small{display:block}.live-task small{font-size:10px}.ready-title{font-size:14px;margin:9px 0 5px;color:#bce4d0}#ready-result .media{border:1px solid #456657;border-radius:7px;overflow:hidden}
-</style><main><header><h1>实时角色预览 <span class="version">v3.1</span></h1><span id="live" class="statusline">读取本地记录…</span></header><section id="live-jobs" aria-label="本轮真实任务状态"></section><section id="hero" aria-label="本轮活动任务大预览"><div class="empty">正在载入已有角色原画与最新生成结果…</div></section><section id="ready-result" aria-label="本轮可播放透明动画"></section><div id="warnings" role="status"></div><div class="toolbar"><input id="search" aria-label="搜索全部角色和动作" placeholder="搜索角色名称 / action"><select id="scope" aria-label="覆盖范围"><option value="production">本轮角色画廊</option><option value="unbound">历史连接试样（非本轮）</option></select><button id="refresh">刷新</button></div><div id="summary" class="summary"></div><section id="gallery" class="gallery" aria-label="全角色原画画廊"></section><section id="character-actions" hidden class="character-actions" aria-label="所选角色全部动作"></section><footer><details><summary>本地证据与刷新说明</summary><p>每 3 秒读取真实 job / batch / sample / queue。已有原画可直接进入 Veo；图片生成成功不等于审核通过。未审产物仍可看，历史试样不计入本轮完成。</p><div id="sources"></div><p>界面版本 v3.1 · no-store · 仅安全本地媒体 · 新版本出现时自动更新页面。</p></details></footer></main><dialog id="lightbox" class="lightbox"><button id="close-image">关闭</button><img id="large-image" alt="完整原图预览"></dialog>
+</style><main><header><h1>实时角色预览 <span class="version">v3.4</span></h1><span id="live" class="statusline">读取本地记录…</span></header><section id="live-jobs" aria-label="本轮真实任务状态"></section><section id="hero" aria-label="本轮活动任务大预览"><div class="empty">正在载入已有角色原画与最新生成结果…</div></section><section id="ready-result" aria-label="本轮可播放透明动画"></section><div id="warnings" role="status"></div><div class="toolbar"><input id="search" aria-label="搜索全部角色和动作" placeholder="搜索角色名称 / action"><select id="scope" aria-label="覆盖范围"><option value="production">本轮角色画廊</option><option value="unbound">历史素材（待本体复用）</option></select><button id="refresh">刷新</button></div><div id="summary" class="summary"></div><section id="gallery" class="gallery" aria-label="全角色原画画廊"></section><section id="character-actions" hidden class="character-actions" aria-label="所选角色全部动作"></section><footer><details><summary>本地证据与刷新说明</summary><p>每 3 秒读取真实 job / batch / sample / queue。已有原画可直接进入 Veo；图片生成成功不等于审核通过。未审产物仍可看，历史试样不计入本轮完成。</p><div id="sources"></div><p>界面版本 v3.4 · no-store · 仅安全本地媒体 · 新版本出现时自动更新页面。</p></details></footer></main><dialog id="lightbox" class="lightbox"><button id="close-image">关闭</button><img id="large-image" alt="完整原图预览"></dialog>
 <script>
-const VIEW_VERSION='3.1',$=id=>document.getElementById(id);let data={items:[],labels:[]},busy=false,selectedCharacter=null,selectedAction=null,heroChoice=null,actionLimit=24,heroSignature='',detailSignature='',gallerySignature='',liveSignature='',readySignature='';const players=new Set();
+const VIEW_VERSION='3.4',$=id=>document.getElementById(id);let data={items:[],labels:[]},busy=false,selectedCharacter=null,selectedAction=null,heroChoice=null,actionLimit=24,heroSignature='',detailSignature='',gallerySignature='',liveSignature='',readySignature='';const players=new Set();
+$('character-actions').after($('ready-result'));
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
 function enlarge(url){$('large-image').src=url;$('lightbox').showModal()}$('close-image').onclick=()=>$('lightbox').close();
 function panel(label,url,kind='image',eager=false){const p=el('div',undefined,'panel'),head=el('div',undefined,'label');head.append(el('span',label));p.append(head);const stage=el('div',undefined,'stage');p.append(stage);if(url){const media=el(kind==='video'?'video':'img');media.src=url;if(kind==='video'){media.controls=true;media.muted=true;media.playsInline=true;media.preload='metadata'}else{media.alt=label;media.loading=eager?'eager':'lazy';const open=el('a','放大');open.href=url;open.onclick=e=>{e.preventDefault();enlarge(url)};head.append(open);media.onclick=()=>enlarge(url)}media.onerror=()=>{stage.replaceChildren(el('div','本地文件暂不可读，稍后刷新。','empty'))};stage.append(media)}else stage.append(el('div','等待本地结果 · 尚无可预览文件','empty'));return p}
@@ -536,13 +670,13 @@ function stopInside(root){for(const p of players){if(root.contains(p)){p.stop();
 function displayName(item){return item.aliases?.[0]||item.name||item.character}
 function makePreview(item,isHero=false){const root=el('article',undefined,'hero'),head=el('div',undefined,'herohead');head.append(el('h2',displayName(item)+' · '+(item.display_action||item.action)));if(isHero){const chooser=el('select');chooser.setAttribute('aria-label','选择活动任务');const candidates=data.items.filter(i=>i.group==='production'&&(i.active||i.attempts?.length||i.queued));for(const i of candidates){const o=el('option',i.character+' / '+i.action);o.value=i.id;o.selected=i.id===item.id;chooser.append(o)}chooser.onchange=()=>{heroChoice=chooser.value;heroSignature='';renderHero()};if(candidates.length>1)head.append(chooser)}root.append(head);const media=el('div',undefined,'media');media.append(panel('已有角色原画',item.media.art,'image',isHero));if(item.mode!=='existing_image'&&item.media.still)media.append(panel('最新首帧 · '+(item.current_still_attempt?.endsWith('-v2')?'v2':'已生成'),item.media.still,'image',isHero));if(item.media.video)media.append(panel('真实 Veo 原视频',item.media.video,'video',isHero));else media.append(panel(item.stages[3]?.state==='waiting'?'Veo 已提交 · 等待结果':'Veo 视频 · 尚无本地结果',null));if(item.media.frames?.length)media.append(framePanel(item,isHero));root.append(media);const strip=el('div',undefined,'compact');const indices=item.mode==='existing_image'?[0,3,4,5,6]:[0,1,2,3,4,5,6];for(const i of indices){const s=item.stages[i];strip.append(el('span',(data.labels[i]||'状态')+'：'+s.text,'tag '+s.state))}root.append(strip);const details=el('div',undefined,'evidence');if(item.mode==='existing_image')details.append(el('p','已有原画直接用于视频生成，无需另做首帧。','muted'));if(item.attempts?.length){const history=el('details');history.append(el('summary','尝试历史与审核（'+item.attempts.length+'）'));for(const a of item.attempts){const e=el('div',undefined,'history-entry');e.append(el('p',a.name+' · '+a.state+(a.review?' · '+a.review:'')));if(a.review_notes)e.append(el('p',a.review_notes));for(const [key,label]of [['image','查看这次首帧'],['video','查看这次视频']])if(a[key]){const link=el('a',label);link.href=a[key];link.target='_blank';link.rel='noopener';e.append(link)}history.append(e)}details.append(history)}const facts=el('details');facts.append(el('summary','动作说明与持久化证据'));for(const n of item.notes||[])facts.append(el('p',n));for(const p of item.evidence||[])facts.append(el('p',p,'muted'));details.append(facts);root.append(details);return root}
 function rank(i){return (i.group==='production'?100:0)+(i.stages[3]?.state==='waiting'?60:0)+(i.active?30:0)+(i.media.video?20:0)+(i.queued?10:0)}
-function renderHero(){const candidates=data.items.filter(i=>i.group==='production');const chosen=candidates.find(i=>i.id===heroChoice)||candidates.slice().sort((a,b)=>rank(b)-rank(a)||b.updated_at-a.updated_at)[0];if(!chosen)return;const signature=JSON.stringify(chosen);if(signature!==heroSignature){stopInside($('hero'));$('hero').replaceChildren(makePreview(chosen,true));heroSignature=signature}}
+function renderHero(){const candidates=data.items.filter(i=>i.group==='production'&&!i.accepted_baseline&&!i.completed_baseline&&i.video_job&&(['submitted','pending','queued','processing','running','polling','waiting'].includes(i.video_job.state)||(i.video_job.submission_in_progress&&i.video_job.state!=='submission_unknown')));const chosen=data.items.find(i=>i.id===heroChoice)||candidates.slice().sort((a,b)=>b.updated_at-a.updated_at)[0];$('hero').hidden=!chosen;if(!chosen){stopInside($('hero'));$('hero').replaceChildren();heroSignature='';return}const signature=JSON.stringify(chosen);if(signature!==heroSignature){stopInside($('hero'));$('hero').replaceChildren(makePreview(chosen,true));heroSignature=signature}}
 function groups(){const q=$('search').value.toLowerCase().replace(/human0/g,'human-0'),scope=$('scope').value,result=new Map();for(const item of data.items){if(item.group!==scope)continue;const text=JSON.stringify([item.character,item.name,item.aliases,item.action,item.display_action]).toLowerCase();if(q&&!text.includes(q))continue;const key=scope==='production'?item.character:item.id;if(!result.has(key))result.set(key,[]);result.get(key).push(item)}return result}
 function renderGallery(){const all=groups(),signature=JSON.stringify([...all].map(([key,items])=>[key,items.length,items.map(i=>i.media.art).find(Boolean),items[0].aliases]));if(signature!==gallerySignature){$('gallery').replaceChildren();for(const [key,items]of all){const reference=items.find(i=>i.media.art)||items[0],button=el('button',undefined,'character');button.type='button';button.dataset.character=key;button.setAttribute('aria-expanded',String(selectedCharacter===key));const portrait=el('div',undefined,'portrait');if(reference.media.art){const img=el('img');img.src=reference.media.art;img.alt=displayName(reference);img.loading='lazy';img.onerror=()=>portrait.replaceChildren(el('div','原画暂不可读','empty'));portrait.append(img)}else portrait.append(el('div','暂无本地原画','empty'));const caption=el('span',undefined,'caption');caption.append(el('strong',displayName(reference)),el('small',reference.character+' · '+items.length+' 个动作'));button.append(portrait,caption);button.onclick=()=>{selectedCharacter=selectedCharacter===key?null:key;selectedAction=null;actionLimit=24;detailSignature='';renderActions();for(const b of $('gallery').children)b.setAttribute('aria-expanded',String(b.dataset.character===selectedCharacter));if(selectedCharacter)$('character-actions').scrollIntoView({block:'start',behavior:'smooth'})};$('gallery').append(button)}gallerySignature=signature}const c=data.coverage_summary||{};const existing=[...all.values()].filter(items=>items.some(i=>i.media.art)).length;$('summary').textContent=`${all.size} 个角色 · ${existing} 张已有原画 · 本轮完整覆盖 ${data.counts?.production||0} 个动作`+(c.role_form_profiles?` / ${c.role_form_profiles} 个角色形态`:'')+' · 点击角色展开动作';renderActions()}
 function renderActions(){const all=groups(),items=all.get(selectedCharacter);const target=$('character-actions');if(!items){stopInside(target);target.hidden=true;return}target.hidden=false;const signature=JSON.stringify([items,selectedAction,actionLimit]);if(signature===detailSignature)return;detailSignature=signature;stopInside(target);target.replaceChildren();const head=el('div',undefined,'actions-head');head.append(el('h2',displayName(items[0])+' · '+items.length+' 个动作'));const close=el('button','收起');close.onclick=()=>{selectedCharacter=null;detailSignature='';renderGallery()};head.append(close);target.append(head);const list=el('div',undefined,'actions-list');for(const item of items.slice(0,actionLimit)){const b=el('button',undefined,'action-button');b.append(el('span',item.display_action||item.action),el('small',item.media.video?'原视频可看':item.stages[3]?.text));b.onclick=()=>{selectedAction=item.id;detailSignature='';renderActions()};list.append(b)}target.append(list);if(items.length>actionLimit){const more=el('button','更多动作（'+(items.length-actionLimit)+'）');more.id='more';more.onclick=()=>{actionLimit+=24;detailSignature='';renderActions()};target.append(more)}const selected=items.find(i=>i.id===selectedAction);if(selected){const d=el('div',undefined,'action-detail');d.append(makePreview(selected));target.append(d)}}
-function renderLive(){const allJobs=data.items.filter(i=>i.group==='production'&&i.video_job);const batchJobs=allJobs.filter(i=>i.queued||i.evidence.some(p=>p.startsWith('batch-01/')));const jobs=batchJobs.length?batchJobs:allJobs;const submitted=jobs.filter(i=>i.video_job.has_external_job_id),waiting=submitted.filter(i=>!['succeeded','completed','failed','error','cancelled'].includes(i.video_job.state)),completed=jobs.filter(i=>['succeeded','completed'].includes(i.video_job.state)),inflight=jobs.filter(i=>i.video_job.submission_in_progress&&!i.video_job.has_external_job_id&&i.video_job.state!=='submission_unknown'),unknown=jobs.filter(i=>i.video_job.state==='submission_unknown'),prepared=jobs.filter(i=>['prepared','created','draft'].includes(i.video_job.state)&&!i.video_job.has_external_job_id&&!i.video_job.submission_in_progress);const signature=JSON.stringify(jobs.map(i=>[i.id,i.video_job,i.stages[3],i.media.art]));if(signature===liveSignature)return;liveSignature=signature;$('live-jobs').replaceChildren();$('live-jobs').append(el('p',`本轮批次真实任务：${submitted.length} 已有供应商回执 · ${waiting.length} 等待生成 · ${completed.length} 已完成 · ${inflight.length} 提交锁待回执 · ${prepared.length} 待提交 · ${unknown.length} 回执待确认`,'live-count'));const strip=el('div',undefined,'live-strip');jobs.sort((a,b)=>(b.video_job.has_external_job_id?1:0)-(a.video_job.has_external_job_id?1:0)||b.updated_at-a.updated_at);for(const i of jobs){const b=el('button',undefined,'live-task '+i.stages[3].state);if(i.media.art){const image=el('img');image.src=i.media.art;image.alt=i.character;b.append(image)}const text=el('span');text.append(el('strong',i.character+' / '+i.action),el('small',i.video_job.has_external_job_id?'已有真实回执 · '+i.video_job.state:i.stages[3].text));b.append(text);b.onclick=()=>{heroChoice=i.id;heroSignature='';renderHero()};strip.append(b)}$('live-jobs').append(strip)}
-function renderReady(){const item=data.items.find(i=>i.group==='production'&&i.character==='human-0'&&i.action==='walk'&&i.media.frames?.length)||data.items.find(i=>i.group==='production'&&i.media.frames?.length);if(!item)return;const signature=JSON.stringify([item.id,item.media,item.seconds,item.loop]);if(signature===readySignature)return;readySignature=signature;stopInside($('ready-result'));$('ready-result').replaceChildren(el('h2','已可播放：'+item.character+' / '+item.action+' · '+item.media.frames.length+' 帧透明动画','ready-title'));const media=el('div',undefined,'media');media.append(framePanel(item,true));if(item.media.video)media.append(panel('对应真实原视频',item.media.video,'video',true));$('ready-result').append(media)}
-async function refresh(){if(busy)return;busy=true;try{const response=await fetch('/api/progress',{cache:'no-store'});if(!response.ok)throw Error();const next=await response.json();if(next.ui_version&&next.ui_version!==VIEW_VERSION){$('live').textContent='检测到新版，正在更新界面…';const url=new URL(location.href);url.searchParams.set('v',next.ui_version);location.replace(url);return}data=next;$('live').textContent='v2 · '+(data.updated_at?new Date(data.updated_at).toLocaleTimeString():'读取中');$('warnings').replaceChildren(...(data.warnings||[]).map(w=>el('p',w,'alert')));$('sources').replaceChildren(...(data.sources||[]).map(s=>el('p',s.name+' · '+(s.exists?'已发现':'尚未出现'))));renderLive();renderHero();renderReady();renderGallery()}catch(e){$('live').textContent='连接暂断 · 保留已读结果'}finally{busy=false}}
+function renderLive(){const production=data.items.filter(i=>i.group==='production'),current=production.filter(i=>!i.accepted_baseline),jobs=current.filter(i=>i.video_job),history=data.items.filter(i=>i.group!=='production'&&i.evidence.some(p=>p.startsWith('batch-01/'))&&i.video_job),done=history.filter(i=>['succeeded','completed'].includes(i.video_job.state)).length,unknown=history.filter(i=>i.video_job.state==='submission_unknown').length,submitted=jobs.filter(i=>i.video_job.has_external_job_id).length,planned=current.filter(i=>i.queue_state==='planned'&&!i.video_job).length,reuse=production.filter(i=>i.completed_baseline).length,candidates=current.filter(i=>i.queue_state==='reuse_candidate_review_before_generation').length,holds=current.filter(i=>i.queue_state==='reconciliation_hold').length;const signature=JSON.stringify([data.scope_revision,data.counts?.production,jobs.map(i=>[i.id,i.video_job]),planned,reuse,candidates,holds,done,unknown]);if(signature===liveSignature)return;liveSignature=signature;$('live-jobs').replaceChildren(el('p',`${data.scope_revision||'本轮'}：${data.counts?.production||0} 个目标 · ${planned} planned 尚未提交 · ${submitted} 个本轮真实回执；另含 ${reuse} 个已接入复用、${candidates} 个待审候选、${holds} 个查账锁定。历史批 01：${done} completed + ${unknown} unknown，媒体与费用保留。`,'live-count'));const strip=el('div',undefined,'live-strip');for(const i of jobs.sort((a,b)=>b.updated_at-a.updated_at)){const b=el('button',undefined,'live-task');if(i.media.art){const image=el('img');image.src=i.media.art;image.alt=i.character;b.append(image)}b.append(el('span',i.character+' / '+i.action+' · '+i.video_job.state));b.onclick=()=>{heroChoice=i.id;heroSignature='';renderHero()};strip.append(b)}$('live-jobs').append(strip)}
+function renderReady(){const item=data.items.find(i=>i.group==='production'&&i.accepted_baseline&&i.media.frames?.length);if(!item)return;const signature=JSON.stringify([item.id,item.media,item.seconds,item.loop,item.integration]);if(signature===readySignature)return;readySignature=signature;stopInside($('ready-result'));const section=el('details');section.append(el('summary','已完成 / 已接入：'+item.character+' / '+item.action+' · '+item.media.frames.length+' 帧透明动画'));section.append(makePreview(item));$('ready-result').replaceChildren(section)}
+async function refresh(){if(busy)return;busy=true;try{const response=await fetch('/api/progress',{cache:'no-store'});if(!response.ok)throw Error();const next=await response.json();if(next.ui_version&&next.ui_version!==VIEW_VERSION){$('live').textContent='检测到新版，正在更新界面…';const url=new URL(location.href);url.searchParams.set('v',next.ui_version);location.replace(url);return}data=next;$('live').textContent='v'+VIEW_VERSION+' · '+(data.updated_at?new Date(data.updated_at).toLocaleTimeString():'读取中');$('warnings').replaceChildren(...(data.warnings||[]).map(w=>el('p',w,'alert')));$('sources').replaceChildren(...(data.sources||[]).map(s=>el('p',s.name+' · '+(s.exists?'已发现':'尚未出现'))));renderLive();renderHero();renderReady();renderGallery()}catch(e){$('live').textContent='连接暂断 · 保留已读结果'}finally{busy=false}}
 $('search').oninput=()=>{gallerySignature='';detailSignature='';renderGallery()};$('scope').onchange=()=>{selectedCharacter=null;gallerySignature='';detailSignature='';renderGallery()};$('refresh').onclick=refresh;refresh();setInterval(refresh,3000);document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const p of players)p.stop();document.querySelectorAll('video').forEach(v=>v.pause())}else refresh()});
 </script></html>
 '''
@@ -558,7 +692,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(size))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        self.send_header('Pragma', 'no-cache')
+        self.send_header('Expires', '0')
         self.send_header('X-Progress-View-Version', VIEW_VERSION)
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
@@ -639,13 +775,14 @@ def main():
     parser.add_argument('--coverage', action='append', default=[], help='Explicit coverage JSON; may appear later.')
     parser.add_argument('--media-root', action='append', default=[], help='Additional explicitly allowed local media root.')
     parser.add_argument('--port', type=int, default=8805)
+    parser.add_argument('--scope-policy', choices=['body-motion-v3', 'body-motion-v3-r2'], help='Use only the named scope revision, without merging older targets.')
     args = parser.parse_args()
     roots, coverage, allowed = ([Path(v).resolve() for v in values] for values in (args.root, args.coverage, args.media_root))
     if any(str(p).startswith('\\\\') for p in roots + coverage + allowed):
         parser.error('Network shares are not allowed.')
     server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
     server.daemon_threads = True
-    server.evidence = Evidence(roots, coverage, allowed)
+    server.evidence = Evidence(roots, coverage, allowed, args.scope_policy)
     threading.Thread(target=server.evidence.run, daemon=True).start()
     print(f'Progress view: http://127.0.0.1:{args.port}/', flush=True)
     try:

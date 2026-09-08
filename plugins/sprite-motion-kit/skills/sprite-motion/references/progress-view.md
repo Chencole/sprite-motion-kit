@@ -1,6 +1,36 @@
 # Live production evidence view
 
-Current UI revision: **3.1**, at `http://127.0.0.1:8805/?v=3.1`.
+Current UI revision: **3.4**, at `http://127.0.0.1:8805/?v=3.4`.
+
+For the revised body-only scope, pass `--scope-policy body-motion-v3-r2`. The viewer
+discovers JSON specs and scope/batch directories whose names contain
+`body-motion-v3-r2` beside the configured coverage files. Only that declared scope
+counts as the new target; until it appears the new target count is zero with an
+explicit pending-source note. Skill effects belong to the runtime, not additional
+generated body clips. Old batch-01 queue summaries and unsubmitted legacy targets
+are superseded. Prior videos and the unknown submission receipt remain in history,
+with recorded point costs and a "pending body reuse" note; they are not accepted
+as compliant with the new scope. New workflow evidence must match the new scope
+hash. The user-requested active human-0/walk transparent baseline remains visible
+and playable separately from the new target count. This routing changes no jobs,
+approval files, queue records or runtime assets.
+
+Confirmed coordinating source contract:
+
+- `outputs/body-motion-v3-r2-spec.json` and
+  `outputs/body-motion-v3-r2-batch/scope.json`: schema 2, revision 4,
+  `scope_mode=full_character`, `production_policy=body_actions_with_runtime_vfx`.
+  `characters` is keyed by character ID; `character` is its existing PNG and
+  `required_actions` is the authoritative action string array. The target is 37
+  identities and 314 actions, including the preserved human-0/walk baseline.
+- `E:/Dev/Duskbone/work/veo-production-20260908/body-motion-v3-r2-fullqueue.json`:
+  schema 3, with scope-bound `items`, `character`, `action`, `character_png`,
+  `state`, `design_state` and `eligible_for_new_submission`. Planned actions,
+  reuse candidates, completed-video rebinding and reconciliation holds remain
+  distinct; queue entries are never proof of a supplier submission.
+- The gameplay manifest's 740 retained mapping records and the skill map's 86
+  skill IDs are runtime mappings, not generated-action target counts. Existing
+  video success or a validated design is not a no-VFX visual approval.
 Version-2 pages automatically detect this API version and reload. The top live
 task strip counts actual batch video jobs with `external_job_id`, completed jobs,
 `submit.lock` files awaiting receipts, prepared jobs and unknown submission receipts
@@ -31,7 +61,7 @@ Python send Ctrl+C only to that owned session and relaunch the recorded command.
 the coordinating session; do not repeat that launch mode there. An occupied port
 fails without stopping its owner. Never stop the independent 8804 review service.
 
-Open `http://127.0.0.1:8805/?v=2`. Version 2 places the current task's real images
+Open `http://127.0.0.1:8805/`. Version 2 places the current task's real images
 and video above its compact status strip, including in a narrow sidebar. Below
 it, one existing-art thumbnail per character opens that character's full action
 list, with 24-action expansion and search across the complete inventory.
@@ -120,16 +150,16 @@ supported. Browser media URLs contain opaque registered identifiers.
 Responses use no-store, no-referrer, nosniff and a restrictive same-origin CSP.
 Host and Origin validation blocks foreign browser origins and DNS rebinding.
 The only data API is `/api/progress`, a deliberately reduced public projection.
-Its `schema_version` is 1 and `ui_version` is "2", with `updated_at`, `poll_seconds`, `sources`, `warnings`,
+Its `schema_version` is 1 and `ui_version` is "3.4", with `updated_at`, `poll_seconds`, `sources`, `warnings`,
 `coverage_summary`, `counts`, `labels` and `items`. Each item contains safe IDs,
 character/action, group, seven independent stages, opaque local media handles,
 evidence file labels and optional upload receipt. `counts.production` counts all
 inventory actions, not completed actions. The source batch remains schema 2.
 Do not reverse proxy or expose this server publicly.
 The page and all API/media responses are `no-store` and carry
-`X-Progress-View-Version: 2`. Version-2 clients detect future `ui_version` changes
+`X-Progress-View-Version: 3.4`. Version-2 clients detect future `ui_version` changes
 and reload once with the new version query. An already open pre-versioned client
-must be navigated once to `/?v=2`; old JavaScript cannot gain reload logic without
+must be navigated once to `/`; old JavaScript cannot gain reload logic without
 loading the new page.
 
 For the coordinating full roster, additionally pass
@@ -142,3 +172,30 @@ evidence documents and 12 MB per JSON. Config/database/secret directories are
 excluded. Partial JSON is retried on the next scan; a failed scan preserves the
 last snapshot with a visible warning. Use atomic JSON replacement in producers.
 For very large batches supply narrow roots; the page reports scan-limit warnings.
+
+## Revision 3.4 landing behavior
+
+The root URL serves the current version with no-store, no-cache, must-revalidate,
+Pragma no-cache and Expires 0. Versioned clients reload when the API version changes.
+Default content is the complete character-art gallery. Only a genuinely pending
+current video job is promoted above it; the accepted baseline cannot win the default
+hero ranking. Completed human-0/walk playback is retained below the gallery in an
+expandable completed/integrated section. Planned queue entries are explicitly not
+submissions, and historical batch-01 receipts remain separate.
+
+The explicit outputs/human-0-walk-integration.json receipt supplies user acceptance
+and recorded integration, matched to the current source-video SHA256 and local frame
+count, with lossless_pixels and registry/atlas evidence present. The viewer does not
+read or modify the actual game registry, and does not claim a fresh runtime audit.
+
+## Final r2 scope selection
+
+Use --scope-policy body-motion-v3-r2. Only the exact r2 spec and batch directory
+are current; the frozen 312-action predecessor is not merged. The r2 queue is
+body-motion-v3-r2-fullqueue.json (schema 3), bound to the selected scope SHA256.
+The 314 targets include 249 base actions and 65 body actions across 37 identities.
+Counts come from individual queue entries and actual persisted jobs, never static
+progress text. Recursive new job receipts appear on the next three-second scan;
+only actual current pending jobs outrank the default complete character gallery.
+The approved human walk remains playable in the completed section, and historical
+batch-01 videos, unknown receipt and recorded costs remain separate.

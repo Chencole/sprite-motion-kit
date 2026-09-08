@@ -94,7 +94,7 @@ class ProgressServerTests(unittest.TestCase):
         code, headers, body = request('/media/' + token, {'Range': 'bytes=2-5'})
         self.assertEqual((code, body), (206, b'2345'))
         self.assertEqual(headers['Content-Range'], 'bytes 2-5/10')
-        self.assertEqual(headers['Cache-Control'], 'no-store')
+        self.assertIn('no-store', {part.strip() for part in headers['Cache-Control'].split(',')})
         self.assertEqual(request('/media/' + token, {'Range': 'bytes=20-30'})[0], 416)
         self.assertEqual(request('/api/progress', {'Origin': 'https://other.example'})[0], 403)
         self.assertEqual(request('/api/progress', {'Host': 'other.example'})[0], 403)
