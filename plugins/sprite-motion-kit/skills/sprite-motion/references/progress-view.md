@@ -1,5 +1,19 @@
 # Live production evidence view
 
+Current UI revision: **3.1**, at `http://127.0.0.1:8805/?v=3.1`.
+Version-2 pages automatically detect this API version and reload. The top live
+task strip counts actual batch video jobs with `external_job_id`, completed jobs,
+`submit.lock` files awaiting receipts, prepared jobs and unknown submission receipts
+separately. It does not trust queue summary state. Recursive scanning includes
+`batch-01/*-veo/job.json`. A dedicated playable-results panel surfaces bound
+transparent samples such as `human-0-walk-transparent/sample.json` even while a
+different submitted task is selected. Windows JSON reads use
+`FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE` to avoid preventing
+producer atomic renames. No locks, jobs or queue records are modified.
+The already completed baseline walk is displayed in playable results, separately
+from the batch-01 totals. A lock is evidence of a lock, not proof that a live API
+call still exists. Unknown receipts are distinct and never imply safe retry.
+
 `scripts/progress_server.py` is a standalone Python 3.10+ standard-library server.
 It binds only `127.0.0.1`, observes existing files, and makes no generation, polling,
 credential, database, integration, or provider calls. It never writes job state.
