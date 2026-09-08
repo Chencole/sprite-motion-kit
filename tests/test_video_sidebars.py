@@ -27,7 +27,51 @@ def fixture(clipped=False):
     return im
 
 
+def fringe_fixture():
+    image = fixture()
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 19, 95), fill=(78, 194, 90, 255))
+    draw.rectangle((140, 0, 159, 95), fill=(78, 194, 90, 255))
+    draw.rectangle((0, 0, 3, 95), fill=(11, 11, 11, 255))
+    draw.rectangle((156, 0, 159, 95), fill=(11, 11, 11, 255))
+    draw.line((4, 0, 4, 95), fill=(0, 55, 0, 255))
+    draw.line((155, 0, 155, 95), fill=(0, 55, 0, 255))
+    image.putpixel((72, 50), (0, 55, 0, 255))
+    return image
+
+
 class SidebarPixelsTests(unittest.TestCase):
+    def test_explicit_threshold_removes_fringe_only_inside_sidebar_columns(self):
+        image = fringe_fixture()
+        unchanged = video_sample._remove_background(image, 'green', 'all', [5, 5])
+        self.assertEqual(unchanged.getpixel((4, 50)), (0, 55, 0, 255))
+        clean = video_sample._remove_background(image, 'green', 'all', [5, 5], 64)
+        self.assertEqual(clean.size, image.size)
+        self.assertEqual(clean.getpixel((4, 50)), (0, 0, 0, 0))
+        self.assertEqual(clean.getpixel((155, 50)), (0, 0, 0, 0))
+        self.assertEqual(clean.getpixel((72, 50)), (0, 55, 0, 255))
+        self.assertEqual(clean.getpixel((100, 44)), image.getpixel((100, 44)))
+        self.assertEqual(clean.getchannel('A').getbbox(), (65, 30, 140, 81))
+
+    def test_sidebar_threshold_is_bounded_and_never_enabled_for_central_body(self):
+        for value in (-1, 65, True, 24.5):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'between 0 and 64'):
+                video_sample._remove_background(fringe_fixture(), 'green', 'all', [5, 5], value)
+        with self.assertRaisesRegex(ValueError, 'explicit black sidebars'):
+            video_sample._remove_background(fringe_fixture(), 'green', 'all', None, 64)
+
+    def test_full_interval_review_uses_the_same_explicit_sidebar_threshold(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'frame.png'
+            fringe_fixture().save(path)
+            args = dict(background='green', key_scope='all', black_sidebars=[5, 5],
+                        safe_rect=[.05, .05, .95, .95], clearance=.02, sampled_indices=[0])
+            with self.assertRaisesRegex(ValueError, 'safe frame'):
+                video_sample._check_workflow_interval([path], [{'index': 0}], (160, 96), **args)
+            result = video_sample._check_workflow_interval([path], [{'index': 0}], (160, 96),
+                                                          sidebar_black_threshold=64, **args)
+            self.assertTrue(result['all_foreground_inside_contract'])
+
     def test_fixed_sidebar_key_preserves_canvas_weapon_and_enclosed_dark_detail(self):
         im = fixture()
         with self.assertRaisesRegex(ValueError, 'perimeter'):
@@ -88,7 +132,7 @@ class SidebarVideoTests(unittest.TestCase):
             self.assertTrue(report['draft'])
             self.assertEqual(report['black_sidebars'], [20, 20])
             self.assertEqual(report['source_edge_frames'], [0, 2])
-            self.assertEqual(report['clips'][0]['source_frame_indices'], [0, 2, 4, 6, 8])
+            self.assertEqual(report['clips'][0]['source_frame_indices'], [0, 2, 5, 7, 9])
             self.assertFalse(report['full_character_complete'])
             with Image.open(root / 'draft/attack/frame-000.png') as im:
                 self.assertEqual(im.size, (160, 96))

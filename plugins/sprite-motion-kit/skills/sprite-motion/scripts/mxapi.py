@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import io
 import ipaddress
 import json
 import math
@@ -15,6 +16,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 
 from provider_credentials import load_mxapi_credentials, ProviderCredentialError
 
@@ -140,14 +142,22 @@ class Client:
         self.credentials = credentials
         self.timeout = timeout
 
-    def request(self, path, *, body=None, query=None):
+    def request(self, path, *, body=None, query=None, multipart=None):
         if not path.startswith("/api/v2/") or ".." in path or "?" in path:
             raise ProviderError("Unsupported provider path")
         url = self.credentials.base_url.rstrip("/") + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
+        headers = self.credentials.headers()
         data = None if body is None else json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(url, data=data, headers=self.credentials.headers(), method="GET" if body is None else "POST")
+        if multipart is not None:
+            if body is not None or path != '/api/v2/upload/temp-image':
+                raise ProviderError('Multipart is only supported for reference image upload')
+            data, content_type = multipart
+            headers = {key: value for key, value in headers.items()
+                       if key.lower() not in {'content-type', 'content-length'}}
+            headers['Content-Type'] = content_type
+        req = urllib.request.Request(url, data=data, headers=headers, method="GET" if data is None else "POST")
         try:
             with urllib.request.build_opener(NoRedirect()).open(req, timeout=self.timeout) as response:
                 raw = response.read(24 * 1024 * 1024 + 1)
@@ -281,6 +291,13 @@ def read_job(job):
 def submit(job: Path, client):
     # Exclusive marker survives crashes/timeouts: a POST is never repeated by rerun.
     packet, state = read_job(job)
+    workflow = packet.get('workflow')
+    if isinstance(workflow, dict):
+        source = workflow.get('identity_source')
+        origin = (source.get('provider_origin') if isinstance(source, dict) else None)
+        origin = origin or workflow.get('identity_provider_origin')
+        if origin:
+            same_origin_reference(client.credentials.base_url, origin)
     if state["state"] != "prepared":
         raise ProviderError("Job has already been submitted or needs reconciliation; no repeat submit")
     try:
@@ -405,6 +422,143 @@ def download(job: Path):
     return {"state": "downloaded", "files": media_paths, "art_approved": False}
 
 
+REFERENCE_MAX_BYTES = 10 * 1024 * 1024
+REFERENCE_FORMATS = {'PNG': ('png', 'image/png'), 'JPEG': ('jpg', 'image/jpeg'),
+                     'GIF': ('gif', 'image/gif'), 'WEBP': ('webp', 'image/webp')}
+
+
+def same_origin_reference(base_url, value):
+    """Resolve a provider upload result without permitting another origin."""
+    try:
+        base = urllib.parse.urlsplit(base_url)
+        if (base.scheme != 'https' or not base.hostname or base.username or base.password
+                or base.port not in (None, 443) or base.query or base.fragment):
+            raise ValueError()
+        origin = urllib.parse.urlunsplit(('https', base.netloc, '', '', ''))
+        if not isinstance(value, str) or not value or any(ord(c) < 33 for c in value) or '\\' in value:
+            raise ValueError()
+        url = urllib.parse.urljoin(origin + '/', value)
+        parsed = urllib.parse.urlsplit(reference_image(url))
+        if (parsed.hostname.lower() != base.hostname.lower()
+                or parsed.port not in (None, 443)):
+            raise ValueError()
+        return url
+    except (ValueError, AttributeError):
+        raise ProviderError('Reference upload URL must stay on the selected HTTPS provider origin') from None
+
+
+class ReferenceRedirect(urllib.request.HTTPRedirectHandler):
+    def __init__(self, origin):
+        super().__init__()
+        self.origin = origin
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        url = same_origin_reference(self.origin, newurl)
+        public_https(url)
+        return super().redirect_request(req, fp, code, msg, headers, url)
+
+
+def _download_reference(url, origin):
+    url = same_origin_reference(origin, url)
+    public_https(url)
+    request = urllib.request.Request(url, headers={'User-Agent': 'SpriteMotionKit/0.5'})
+    try:
+        with urllib.request.build_opener(ReferenceRedirect(origin)).open(request, timeout=55) as response:
+            same_origin_reference(origin, response.geturl())
+            raw = response.read(REFERENCE_MAX_BYTES + 1)
+        if len(raw) > REFERENCE_MAX_BYTES:
+            raise ProviderError('Reference download exceeds 10 MiB')
+        return raw
+    except ProviderError:
+        raise
+    except (OSError, ValueError):
+        raise ProviderError('Reference verification download failed; no generation was submitted') from None
+
+
+def upload_reference(image, job, client):
+    """Publish original bytes to the selected account; never generate an image."""
+    from PIL import Image
+    image, job = Path(image).resolve(), Path(job).resolve()
+    if not image.is_file() or not 0 < image.stat().st_size <= REFERENCE_MAX_BYTES:
+        raise ProviderError('Reference image must be an existing file of at most 10 MiB')
+    raw = image.read_bytes()
+    try:
+        with Image.open(io.BytesIO(raw)) as source:
+            extension, mime = REFERENCE_FORMATS[source.format]
+            if getattr(source, 'n_frames', 1) != 1:
+                raise ProviderError('Reference identity must be a single still image')
+            source.verify()
+    except ProviderError:
+        raise
+    except (OSError, ValueError, KeyError):
+        raise ProviderError('Reference must be a readable JPEG, PNG, GIF or WebP still') from None
+    if len(raw) > REFERENCE_MAX_BYTES:
+        raise ProviderError('Reference image exceeds 10 MiB')
+    origin = same_origin_reference(client.credentials.base_url, '/')[:-1]
+    source_sha = hashlib.sha256(raw).hexdigest()
+    packet = {'schema_version': 1, 'kind': 'reference_upload',
+              'endpoint': '/api/v2/upload/temp-image', 'provider_origin': origin,
+              'source_sha256': source_sha, 'source_size': len(raw), 'source_mime': mime,
+              'source_file': 'source.' + extension}
+    job.mkdir(parents=True, exist_ok=False)
+    (job / packet['source_file']).write_bytes(raw)
+    write_json(job / 'request.json', packet)
+    state = {'schema_version': 1, 'kind': 'reference_upload', 'state': 'uploading',
+             'request_sha256': digest(packet), 'generation_submitted': False}
+    write_json(job / 'job.json', state)
+    boundary = 'SpriteMotionKit' + uuid.uuid4().hex
+    multipart = (f'--{boundary}\r\nContent-Disposition: form-data; name="image"; '
+                 f'filename="reference.{extension}"\r\nContent-Type: {mime}\r\n\r\n').encode('ascii')
+    multipart += raw + f'\r\n--{boundary}--\r\n'.encode('ascii')
+    response = client.request(packet['endpoint'], multipart=(multipart, 'multipart/form-data; boundary=' + boundary))
+    data = unwrap(response)
+    if type(data.get('size')) is not int or data['size'] != len(raw) or data.get('type') != mime:
+        raise ProviderError('Reference upload metadata does not match the source image')
+    url = same_origin_reference(origin, data.get('url'))
+    downloaded = _download_reference(url, origin)
+    if hashlib.sha256(downloaded).hexdigest() != source_sha:
+        raise ProviderError('Uploaded reference bytes differ from the original source SHA256')
+    verified = job / ('verified.' + extension)
+    verified.write_bytes(downloaded)
+    state.update(state='verified', source_sha256=source_sha, remote_sha256=source_sha,
+                 result_urls=[url], local_results=[str(verified)])
+    state['verification_sha256'] = digest({'source_sha256': source_sha, 'result_urls': [url]})
+    write_json(job / 'job.json', state)
+    return {'state': 'verified', 'kind': 'reference_upload', 'job': str(job),
+            'source_sha256': source_sha, 'remote_sha256': source_sha,
+            'generation_submitted': False}
+
+
+def read_uploaded_reference(job):
+    """Check a real upload receipt and immutable local copies, without a request."""
+    job = Path(job).resolve()
+    packet = json.loads((job / 'request.json').read_text(encoding='utf-8'))
+    state = json.loads((job / 'job.json').read_text(encoding='utf-8'))
+    if (not isinstance(packet, dict) or not isinstance(state, dict)
+            or packet.get('kind') != 'reference_upload' or state.get('kind') != 'reference_upload'
+            or state.get('state') != 'verified' or state.get('generation_submitted') is not False
+            or packet.get('endpoint') != '/api/v2/upload/temp-image'
+            or digest(packet) != state.get('request_sha256')):
+        raise ProviderError('Reference upload receipt is incomplete or changed')
+    source = job / str(packet.get('source_file', ''))
+    results, urls = state.get('local_results'), state.get('result_urls')
+    if (not source.resolve().is_relative_to(job) or not source.is_file()
+            or not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], str)
+            or not isinstance(urls, list) or len(urls) != 1):
+        raise ProviderError('Reference upload receipt needs its source and verified download')
+    local = Path(results[0]).resolve()
+    if not local.is_relative_to(job) or not local.is_file():
+        raise ProviderError('Verified reference download is missing or outside the upload job')
+    same_origin_reference(packet.get('provider_origin'), urls[0])
+    expected = packet.get('source_sha256')
+    if (state.get('verification_sha256') != digest({'source_sha256': expected, 'result_urls': urls})
+            or state.get('source_sha256') != expected or state.get('remote_sha256') != expected
+            or hashlib.sha256(source.read_bytes()).hexdigest() != expected
+            or hashlib.sha256(local.read_bytes()).hexdigest() != expected):
+        raise ProviderError('Reference upload source or verified download SHA256 changed')
+    return packet, state, local
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mypixelflow-root", type=Path)
@@ -413,6 +567,9 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("models")
     commands.add_parser("check")
+    upload = commands.add_parser('upload-reference')
+    upload.add_argument('--image', type=Path, required=True)
+    upload.add_argument('--job', type=Path, required=True)
     prep = commands.add_parser("prepare")
     prep.add_argument("--model", choices=MODELS, required=True)
     prep.add_argument("--prompt-file", type=Path, required=True)
@@ -444,6 +601,8 @@ def main():
             client = Client(credentials)
             if args.command == "check":
                 result = client.check()
+            elif args.command == 'upload-reference':
+                result = upload_reference(args.image, args.job, client)
             elif args.command == "submit":
                 if not args.confirm_submit:
                     raise ProviderError("Use --confirm-submit only for a generation already authorized by the user")

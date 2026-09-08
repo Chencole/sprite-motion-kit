@@ -31,14 +31,14 @@ def _run_ffmpeg(command):
     return result
 
 
-def _select_source_frames(video, ffmpeg, start, duration, count):
-    """Inspect decoded timestamps before selecting unique frames in [start, end)."""
+def _select_source_frames(video, ffmpeg, start, duration, count, loop):
+    """Inspect timestamps and select a loop half-open or one-shot closed interval."""
     begin, span = Fraction(str(start)), Fraction(str(duration))
     end = begin + span
     result = _run_ffmpeg([
         str(ffmpeg), '-hide_banner', '-nostdin', '-nostats', '-loglevel', 'info',
         '-i', str(video), '-map', '0:v:0', '-an', '-vf', 'showinfo=checksum=0',
-        '-t', f'{float(end):.9f}', '-fps_mode', 'passthrough', '-f', 'null', '-'])
+        '-fps_mode', 'passthrough', '-f', 'null', '-'])
     time_base, decoded = None, []
     for line in result.stderr.splitlines():
         if 'showinfo' not in line:
@@ -60,10 +60,12 @@ def _select_source_frames(video, ffmpeg, start, duration, count):
         raise ValueError('Source video timestamps must be strictly increasing')
     if decoded[0]['time'] > begin or decoded[-1]['time'] + decoded[-1]['duration'] < end:
         raise ValueError('Requested interval exceeds decoded video coverage; no silent padding')
-    candidates = [frame for frame in decoded if begin <= frame['time'] < end]
+    candidates = [frame for frame in decoded
+                  if begin <= frame['time'] and (frame['time'] < end if loop else frame['time'] <= end)]
     if len(candidates) < count:
         raise ValueError(f'Interval contains {len(candidates)} source frames, expected at least {count}; no silent padding')
-    times = [begin + i * span / count for i in range(count)]
+    divisor = count if loop else count - 1
+    times = [begin + i * span / divisor for i in range(count)]
     # Fraction comparisons keep exact midpoint ties deterministic (earlier frame).
     selected = [min(candidates, key=lambda frame: (abs(frame['time'] - t), frame['time'])) for t in times]
     if len({frame['index'] for frame in selected}) != count:
@@ -73,7 +75,180 @@ def _select_source_frames(video, ffmpeg, start, duration, count):
         raise ValueError('Decoded frame dimensions changed')
     if dimensions[0] * dimensions[1] * count > 120_000_000:
         raise ValueError('Atlas too large; choose fewer frames or a smaller source video')
-    return selected, [float(t) for t in times]
+    return selected, [float(t) for t in times], candidates
+
+
+def _json_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _read_json(path, label):
+    try:
+        value = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as exc:
+        raise ValueError(label + ' is missing or invalid') from exc
+    if not isinstance(value, dict):
+        raise ValueError(label + ' must be an object')
+    return value
+
+
+def _local_result(job, state):
+    results = state.get('local_results')
+    if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], str):
+        raise ValueError('Veo action job must have exactly one downloaded local result')
+    result = Path(results[0])
+    if not result.is_absolute():
+        result = (job / result).resolve()
+    else:
+        result = result.resolve()
+    if not result.is_file() or result.suffix.lower() != '.mp4':
+        raise ValueError('Veo action job local result is missing or is not MP4 video')
+    return result
+
+
+def validate_generation_job(generation_job, video, expected_binding=None):
+    """Bind an input video to one downloaded project-bound Veo action job."""
+    if not isinstance(generation_job, (str, Path)):
+        raise ValueError('Generation job path is required')
+    job = Path(generation_job).resolve()
+    if not job.is_dir():
+        raise ValueError('Generation job directory does not exist')
+    packet = _read_json(job / 'request.json', 'Generation request')
+    state = _read_json(job / 'job.json', 'Generation job state')
+    if _json_digest(packet) != state.get('request_sha256'):
+        raise ValueError('Generation request changed after preparation')
+    workflow = packet.get('workflow')
+    if (packet.get('kind') != 'video' or packet.get('model') != 'veo-3.1-fast'
+            or not isinstance(workflow, dict)
+            or workflow.get('kind') != 'project_bound_veo_action'
+            or workflow.get('phase') != 'action_video'):
+        raise ValueError('Generation job is not a project-bound Veo action-video job')
+    if (state.get('state') != 'succeeded' or not isinstance(state.get('result_urls'), list)
+            or len(state['result_urls']) != 1 or not isinstance(state['result_urls'][0], str)):
+        raise ValueError('Veo action job has not completed successfully')
+    binding = workflow.get('coverage_binding')
+    if not isinstance(binding, dict) or (expected_binding is not None and binding != expected_binding):
+        raise ValueError('Veo action job has the wrong gameplay coverage binding')
+    design = _read_json(job / 'action-design.json', 'Veo action design snapshot')
+    design_sha = _json_digest(design)
+    if (workflow.get('design_sha256') != design_sha or design.get('coverage_binding') != binding
+            or design.get('character_id') != binding.get('character')
+            or design.get('action_id') != binding.get('action')):
+        raise ValueError('Veo action design changed or does not match its gameplay binding')
+    if design.get('action_kind') not in ('loop', 'one_shot'):
+        raise ValueError('Veo action design must specify loop or one_shot')
+    result = _local_result(job, state)
+    source_sha = hashlib.sha256(Path(video).read_bytes()).hexdigest()
+    if hashlib.sha256(result.read_bytes()).hexdigest() != source_sha:
+        raise ValueError('Input video is not the downloaded result of this Veo action job')
+    framing = design.get('framing')
+    if not isinstance(framing, dict):
+        raise ValueError('Veo action design is missing its framing contract')
+    safe_rect, clearance = framing.get('safe_rect'), framing.get('minimum_clearance_ratio')
+    if (not isinstance(safe_rect, list) or len(safe_rect) != 4
+            or any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in safe_rect)
+            or not 0 <= safe_rect[0] < safe_rect[2] <= 1
+            or not 0 <= safe_rect[1] < safe_rect[3] <= 1
+            or isinstance(clearance, bool) or not isinstance(clearance, (int, float))
+            or not 0 <= clearance < .5):
+        raise ValueError('Veo action design has an invalid safe rectangle or clearance')
+    if (safe_rect[0] + clearance >= safe_rect[2] - clearance
+            or safe_rect[1] + clearance >= safe_rect[3] - clearance):
+        raise ValueError('Veo action design safe rectangle collapses after its required clearance')
+    background_mode = design.get('background_mode')
+    if background_mode not in ('green', 'magenta'):
+        raise ValueError('Veo action design needs an explicit supported background_mode')
+    source_mode = workflow.get('source_mode')
+    if source_mode is not None and source_mode not in ('existing_image', 'reviewed_still'):
+        raise ValueError('Unknown Veo image source mode')
+    if source_mode == 'existing_image':
+        source = workflow.get('identity_source')
+        if (not isinstance(source, dict)
+                or any(not isinstance(source.get(key), str) or not re.fullmatch(r'[0-9a-f]{64}', source[key])
+                       for key in ('request_sha256', 'local_sha256', 'character_sha256', 'character_pixel_sha256'))
+                or source.get('character_sha256') != workflow.get('identity_character_sha256')
+                or not isinstance(packet.get('body'), dict)
+                or packet['body'].get('images') != [source.get('url')]
+                or not isinstance(workflow.get('source_risk_notes'), str)
+                or not workflow['source_risk_notes'].strip()
+                or any(key.startswith('action_still_review') for key in workflow)):
+            raise ValueError('Existing-image Veo job has invalid source evidence or a fabricated still review')
+    evidence = {
+        'schema': 1, 'kind': workflow['kind'], 'phase': workflow['phase'],
+        'job': str(job), 'model': packet['model'],
+        'request_sha256': state['request_sha256'], 'design_sha256': design_sha,
+        'coverage_binding': binding, 'source_video_sha256': source_sha,
+        'safe_rect': [float(value) for value in safe_rect],
+        'minimum_clearance_ratio': float(clearance),
+        'background_mode': background_mode,
+        'action_kind': design['action_kind'],
+    }
+    if source_mode is not None:
+        evidence['source_mode'] = source_mode
+    if source_mode == 'existing_image':
+        evidence['identity_character_sha256'] = workflow['identity_character_sha256']
+        evidence['source_risk_notes'] = workflow['source_risk_notes']
+    return evidence, design
+
+
+def _decode_frames(video, ffmpeg, frames, destination, *, prefix='frame'):
+    indices = [frame['index'] for frame in frames]
+    if not indices:
+        raise ValueError('No source frames selected')
+    if indices == list(range(indices[0], indices[-1] + 1)):
+        select = f'between(n\\,{indices[0]}\\,{indices[-1]})'
+    else:
+        select = '+'.join(f'eq(n\\,{index})' for index in indices)
+    command = [str(ffmpeg), '-hide_banner', '-nostdin', '-loglevel', 'error',
+               '-i', str(video), '-map', '0:v:0', '-an', '-vf', 'select=' + select,
+               '-fps_mode', 'passthrough', '-frames:v', str(len(indices)),
+               '-pix_fmt', 'rgba', '-start_number', '0', str(destination / f'{prefix}-%05d.png')]
+    _run_ffmpeg(command)
+    paths = sorted(destination.glob(f'{prefix}-*.png'))
+    if len(paths) != len(indices):
+        raise ValueError(f'Video decode yielded {len(paths)} frames, expected {len(indices)}')
+    return paths
+
+
+def _check_workflow_interval(paths, source_frames, dimensions, *, background, key_scope,
+                             black_sidebars, safe_rect, clearance, sampled_indices,
+                             sidebar_black_threshold=24):
+    if not source_frames or len(paths) != len(source_frames):
+        raise ValueError('Full-interval inspection requires every source frame')
+    width, height = dimensions
+    allowed = [safe_rect[0] + clearance, safe_rect[1] + clearance,
+               safe_rect[2] - clearance, safe_rect[3] - clearance]
+    minimum = [1.0, 1.0, 1.0, 1.0]
+    failures = []
+    for path, source in zip(paths, source_frames):
+        with Image.open(path) as raw:
+            if raw.size != dimensions:
+                raise ValueError('Decoded frame dimensions changed during full-interval review')
+            clean = _remove_background(raw, background, key_scope, black_sidebars, sidebar_black_threshold)
+        bounds = clean.getchannel('A').getbbox()
+        if not bounds:
+            failures.append(source['index'])
+            continue
+        normalized = [bounds[0] / width, bounds[1] / height,
+                      bounds[2] / width, bounds[3] / height]
+        margins = [normalized[0], normalized[1], 1 - normalized[2], 1 - normalized[3]]
+        minimum = [min(before, value) for before, value in zip(minimum, margins)]
+        if (normalized[0] < allowed[0] - 1e-12 or normalized[1] < allowed[1] - 1e-12
+                or normalized[2] > allowed[2] + 1e-12 or normalized[3] > allowed[3] + 1e-12):
+            failures.append(source['index'])
+    if failures:
+        preview = ', '.join(str(value) for value in failures[:8])
+        raise ValueError('Veo action leaves its designed safe frame or clearance at source frame(s): ' + preview)
+    indices = [frame['index'] for frame in source_frames]
+    return {
+        'checked_all_interval_frames': True,
+        'source_frame_count': len(indices),
+        'source_frame_indices': indices,
+        'included_unsampled_frames': bool(set(indices) - set(sampled_indices)),
+        'safe_rect': list(safe_rect), 'minimum_clearance_ratio': clearance,
+        'minimum_observed_canvas_clearance': minimum,
+        'all_foreground_inside_contract': True,
+    }
 
 
 def _edge_connected(mask):
@@ -101,7 +276,12 @@ def _edge_connected(mask):
     return visited
 
 
-def _remove_background(image, mode, key_scope='edge-connected', black_sidebars=None):
+def _remove_background(image, mode, key_scope='edge-connected', black_sidebars=None,
+                       sidebar_black_threshold=24):
+    if type(sidebar_black_threshold) is not int or not 0 <= sidebar_black_threshold <= 64:
+        raise ValueError('Sidebar black threshold must be an integer between 0 and 64')
+    if black_sidebars is None and sidebar_black_threshold != 24:
+        raise ValueError('A custom sidebar black threshold requires explicit black sidebars')
     rgba = np.array(image.convert('RGBA'))
     if black_sidebars is not None:
         if (len(black_sidebars) != 2 or any(type(v) is not int or v < 0 for v in black_sidebars)
@@ -114,7 +294,7 @@ def _remove_background(image, mode, key_scope='edge-connected', black_sidebars=N
             region[:, -right:] = True
         # Only inspected fixed sidebars, never dark armor in the center. Keep
         # nonblack foreground extending into the bars on the original canvas.
-        near_black = (rgba[:, :, :3].max(axis=2) <= 24) & region
+        near_black = (rgba[:, :, :3].max(axis=2) <= sidebar_black_threshold) & region
         rgba[_edge_connected(near_black)] = 0
     if mode != 'alpha':
         rgb = rgba[:, :, :3].astype(np.int16)
@@ -141,7 +321,8 @@ def _remove_background(image, mode, key_scope='edge-connected', black_sidebars=N
 def export_video(video, ffmpeg, out, *, character, action, start, duration, count,
                  loop, background, origin, review_notes, key_scope='edge-connected',
                  character_image=None, batch=None, batch_character=None,
-                 black_sidebars=None, draft=False):
+                 black_sidebars=None, draft=False, generation_job=None,
+                 sidebar_black_threshold=24):
     video, ffmpeg, out = Path(video).resolve(), Path(ffmpeg).resolve(), Path(out).resolve()
     if not video.is_file() or not ffmpeg.is_file():
         raise ValueError('Provide an existing video and FFmpeg executable')
@@ -159,6 +340,10 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         raise ValueError('Key scope must be edge-connected or all')
     if type(draft) is not bool:
         raise ValueError('Draft must be an explicit boolean')
+    if type(sidebar_black_threshold) is not int or not 0 <= sidebar_black_threshold <= 64:
+        raise ValueError('Sidebar black threshold must be an integer between 0 and 64')
+    if black_sidebars is None and sidebar_black_threshold != 24:
+        raise ValueError('A custom sidebar black threshold requires explicit black sidebars')
     if black_sidebars is not None and (len(black_sidebars) != 2 or any(type(v) is not int or v < 0 for v in black_sidebars)):
         raise ValueError('Black sidebars require two fixed nonnegative widths')
     if background == 'alpha' and key_scope != 'edge-connected':
@@ -175,6 +360,16 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         character_image = Path(character_image or entry['character']).resolve()
         if coverage_module.digest(character_image) != entry['character_sha256']:
             raise ValueError('Character reference differs from the coverage batch')
+    generation_evidence, action_design = None, None
+    if generation_job:
+        if not coverage_binding:
+            raise ValueError('A project-bound Veo generation job requires batch and batch-character')
+        generation_evidence, action_design = validate_generation_job(
+            generation_job, video, coverage_binding)
+        if background != generation_evidence['background_mode']:
+            raise ValueError('Background extraction mode differs from the Veo action design')
+        if loop != (action_design['action_kind'] == 'loop'):
+            raise ValueError('Extraction loop flag differs from the Veo action design')
     if character_image:
         character_image = Path(character_image).resolve()
         if not character_image.is_file():
@@ -186,7 +381,8 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                 appearance.verify()
         except OSError as exc:
             raise ValueError('Character reference is not a readable image') from exc
-    selected, sampling_times = _select_source_frames(video, ffmpeg, start, duration, count)
+    selected, sampling_times, interval_frames = _select_source_frames(
+        video, ffmpeg, start, duration, count, loop)
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.video-sample-', dir=out.parent) as temporary:
         staging = Path(temporary) / 'sample'
@@ -194,15 +390,7 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         rawdir.mkdir(parents=True)
         # Select source indices directly; output synchronization must not invent
         # repeats. Both passes explicitly use the same first video stream.
-        vf = 'select=' + '+'.join(f'eq(n\\,{frame["index"]})' for frame in selected)
-        command = [str(ffmpeg), '-hide_banner', '-nostdin', '-loglevel', 'error',
-                   '-i', str(video), '-map', '0:v:0', '-an', '-vf', vf,
-                   '-fps_mode', 'passthrough', '-frames:v', str(count),
-                   '-pix_fmt', 'rgba', '-start_number', '0', str(rawdir / 'frame-%03d.png')]
-        _run_ffmpeg(command)
-        paths = sorted(rawdir.glob('frame-*.png'))
-        if len(paths) != count:
-            raise ValueError(f'Interval yielded {len(paths)} frames, expected {count}; no silent padding')
+        paths = _decode_frames(video, ffmpeg, selected, rawdir)
         frames, bounds, dimensions, edge_frames = [], [], None, []
         for path in paths:
             with Image.open(path) as raw:
@@ -210,7 +398,7 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                     dimensions = raw.size
                 if raw.size != dimensions:
                     raise ValueError('Decoded frame dimensions changed')
-                clean = _remove_background(raw, background, key_scope, black_sidebars)
+                clean = _remove_background(raw, background, key_scope, black_sidebars, sidebar_black_threshold)
             b = clean.getchannel('A').getbbox()
             touches_edge = b and (b[0] == 0 or b[1] == 0 or b[2] == clean.width or b[3] == clean.height)
             if not b or (touches_edge and not draft):
@@ -219,8 +407,21 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                 edge_frames.append(selected[len(frames)]['index'])
             frames.append(clean)
             bounds.append(list(b))
-        shutil.rmtree(rawdir)
         width, height = dimensions
+        interval_review = None
+        if generation_evidence:
+            inspection = staging / 'full-interval'
+            inspection.mkdir()
+            inspection_paths = _decode_frames(video, ffmpeg, interval_frames, inspection, prefix='source')
+            framing = action_design['framing']
+            interval_review = _check_workflow_interval(
+                inspection_paths, interval_frames, dimensions, background=background,
+                key_scope=key_scope, black_sidebars=black_sidebars,
+                safe_rect=framing['safe_rect'], clearance=framing['minimum_clearance_ratio'],
+                sampled_indices=[frame['index'] for frame in selected],
+                sidebar_black_threshold=sidebar_black_threshold)
+            shutil.rmtree(inspection)
+        shutil.rmtree(rawdir)
         if origin[0] >= width or origin[1] >= height:
             raise ValueError('Origin is outside video canvas')
         if width * height * count > 120_000_000:
@@ -262,10 +463,17 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                   'character_sha256': character_hash,
                   'source_video_sha256': hashlib.sha256(video.read_bytes()).hexdigest(),
                   'source_video_name': video.name, 'source_video': source_copy,
+                  'generation_job': generation_evidence,
+                  'generation_interval_review': interval_review,
                   'interval': [start, start + duration],
-                  'sampling': 'Nearest unique source frame within [start, end) for each uniform target time; midpoint ties use the earlier frame; no optical flow or padding',
+                  'sampling': ('Nearest unique source frame within [start, end) for each uniform target time; '
+                               'loop endpoint excluded; midpoint ties use the earlier frame; no optical flow or padding'
+                               if loop else
+                               'Nearest unique source frame within [start, end] including the true one-shot endpoint; '
+                               'midpoint ties use the earlier frame; no optical flow or padding'),
                   'background': background,
                   'black_sidebars': list(black_sidebars) if black_sidebars is not None else None,
+                  'sidebar_black_threshold': sidebar_black_threshold if black_sidebars is not None else None,
                   'sidebar_processing': 'Remove edge-connected near-black pixels only inside fixed left/right sidebar widths; preserve canvas and nonblack extensions' if black_sidebars is not None else None,
                   'key_scope': key_scope if background != 'alpha' else None,
                   'background_removal': 'preserved source alpha' if background == 'alpha' else f'fixed chroma thresholds, {key_scope} key pixels; no per-frame erosion or despill',
@@ -309,8 +517,11 @@ if __name__ == '__main__':
                         help='Explicit fixed black pillarbox widths; remove edge-connected black there without cropping the canvas')
     parser.add_argument('--draft', action='store_true',
                         help='Allow source-edge clipping for diagnostic viewing only; the output cannot pass batch acceptance')
+    parser.add_argument('--sidebar-black-threshold', type=int, default=24,
+                        help='Explicit sidebar-only near-black RGB maximum, 0-64 (default 24); requires --black-sidebars when changed')
     parser.add_argument('--origin', type=int, nargs=2, required=True)
     parser.add_argument('--character-image', help='Approved source appearance; bound batches supply this automatically')
     parser.add_argument('--batch', help='Existing project-discovery coverage batch')
     parser.add_argument('--batch-character', help='Character ID in that batch; action comes from --action')
+    parser.add_argument('--generation-job', help='Downloaded project-bound Veo action-video job that produced --video')
     print(json.dumps(export_video(**vars(parser.parse_args())), ensure_ascii=False))

@@ -36,7 +36,7 @@ API redirects are refused. Media downloads never carry the provider credentials.
 
 Image profiles: `gpt-image-2`, `seedream-4.5`, `seedream-5.0`, `nano2`.
 Video profiles: `seedance-2.0`, `seedance-2.0-fast`, `seedance-2.0-mini`, `seedance-1.0-fast`,
-`seedance-1.0-lite-i2v`. Use the user's selected model. Do not silently change model,
+`seedance-1.0-lite-i2v`, `veo-3.1-fast`. Use the user's selected model. Do not silently change model,
 drop references, increase duration, buy credits, or retry a paid generation.
 
 If the user prioritizes the cheapest trial, compare their current account pricing
@@ -195,6 +195,14 @@ order. No references select text-to-video. This profile does not select the
 separate multi-image ingredients model. A supplied reference must be a reachable
 HTTPS URL, using the same validation as the other adapters.
 
+For game-character production, use [the project-bound Veo workflow](veo-workflow.md).
+When the user chooses existing art, `prepare-video --existing-image-job JOB`
+verifies its identity and binds it directly to the authored action without a new
+image task or still review. Record weapon/start-pose conflicts as risks rather than
+blocking authorized reuse. The optional `--still-job` route retains review of a
+new action-specific still when the user selects it. The raw command below remains
+useful for adapter diagnostics; it does not establish project coverage binding.
+
 ```sh
 python scripts/mxapi.py prepare --model veo-3.1-fast --reference HTTPS_IMAGE_RESULT_URL --prompt-file walk.txt --ratio 16:9 --job NEW_VEO_JOB
 ```
@@ -214,6 +222,30 @@ this profile's price. The documented optional image expansion costs an additiona
 RMB 0.20 and remains disabled by this adapter.
 
 ## Distribution and verification
+
+### Publish an existing local original
+
+For an approved local game image, use the same account's documented temporary
+image endpoint, `POST /api/v2/upload/temp-image`, with multipart field `image`.
+The [temporary upload documentation](https://open.mxapi.org/api/docs?id=temp-image-upload)
+describes JPEG, PNG, GIF and WebP up to 10 MB, free upload, and retention of about
+three days. The plugin accepts one still, keeps its original bytes, rejects a
+result on another origin, and downloads the returned image without authorization
+headers to verify the source SHA256. A mismatch is a failure, not a new identity.
+
+```sh
+python scripts/mxapi.py --mypixelflow-root /path/to/mypixelflow --node /path/to/node \
+  upload-reference --image /path/to/game-original.png --job jobs/original-upload
+python scripts/veo_workflow.py prepare-video \
+  --batch jobs/batch --character guard --action walk --design jobs/walk-design.json \
+  --existing-image-job jobs/original-upload --job jobs/walk-video
+```
+
+The upload job has kind `reference_upload` and state `verified`; it is never a
+successful generated-image job. Preparation remains local and no generation is
+submitted by these commands. Keep upload receipts and their temporary URLs out of
+Git. An expired URL needs another authorized upload into a new directory, not a
+replacement character or a paid identity generation.
 
 Keep runtime jobs, prompt/reference uploads, signed media URLs and credentials out
 of the repository. Do not bundle another project's database, configuration or model

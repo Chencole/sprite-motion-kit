@@ -1,6 +1,6 @@
 ---
 name: sprite-motion
-description: Create game-character animations from custom 3D pose references or character-image-to-video generation, then export transparent sprite frames with synchronized visual review. Supports the user's MXAPI image and Seedance account, arbitrary actions, attacks, locomotion, jumps, falls and monster motions; not generic video generation.
+description: Create game-character animations from custom 3D pose references or project-bound character-image-to-video generation, then export transparent sprite frames with synchronized visual review. Supports the user's MXAPI image, Seedance and Veo account, arbitrary actions, attacks, locomotion, jumps, falls and monster motions; not generic video generation.
 ---
 
 # Sprite Motion
@@ -17,17 +17,36 @@ Map every applicable requirement to an independent action ID and its exact game 
 
 ## Selected image-to-video route
 
+Keep the user's live progress view available throughout generation, extraction
+and review. Use [the progress viewer](references/progress-view.md) and
+`scripts/progress_server.py` to show actual job states and artifacts. Never infer
+completion from a running request.
+
+When the approved game identity is a local image, use `scripts/mxapi.py
+upload-reference --image ORIGINAL --job UPLOAD_JOB` with the selected account.
+This publishes the original bytes to that provider and verifies the downloaded
+SHA256. When the user chooses existing art, pass the upload directory to
+`veo_workflow.py prepare-video --existing-image-job UPLOAD_JOB` with the bound
+batch, character, action and design. This creates only a video request: no image
+generation or action-still review is required. Record visible weapon/start-pose
+conflicts as `--source-risk-notes`, without blocking authorized direct reuse.
+Do not generate a substitute identity or fabricate a successful image job merely
+to get a reachable URL.
+
 If the user selects video-first generation instead, follow [video samples](references/video-samples.md). For an existing MXAPI/MyPixelFlow account, use [MXAPI connection](references/mxapi-generation.md): `scripts/mxapi.py` provides real image/video submission, polling and media download. Reuse only the account the user selected; a working credential or available quota alone does not authorize an unrelated generation. Generate or obtain a real continuous action video, inspect a complete action interval, then use `scripts/video_sample.py` to extract it. Do not pretend old sprite playback is a newly generated video, infer smoothness from extraction tests, or revert to the rejected image-sheet route. The local extractor alone cannot generate a video; no credentials, model weights or credits are bundled.
 
+For Veo, use the [project-bound Veo workflow](references/veo-workflow.md) through `scripts/veo_workflow.py`. Author each action from its coverage requirement, including ordered phases, gameplay events, numeric action envelope and structured equipment states. The user's chosen image route takes precedence: `--existing-image-job` reuses verified existing identity art directly and records `source_mode: existing_image`, without a new image task or still review. A supplied image is Veo's first frame, so document weapon and start-pose conflicts honestly rather than pretending they were reviewed. Only when the user selects a new action-specific still should the prepare-still/review-still route be used; its review remains mandatory for `--still-job`. Design, full-interval framing, transparent extraction and final action-quality checks apply to both routes.
+
 Keep this route for subsequent characters in the same project after the user selects
-it. Generate one complete character still or reuse the approved still, use its
-reachable image URL for the chosen video model, and extract the actual animation.
+it. Keep one approved identity image and honor direct reuse when selected; only
+derive a new action-specific start still when that route is authorized. Use the bound provider result URL for the
+chosen video model, and extract the actual animation.
 Do not require a new mannequin, pose-sheet generation, local diffusion model or
 unrelated website subscription for this route. First validate the requested sample;
 an accepted raw video does not automatically approve every extracted frame or the
 entire roster. Keep an explicitly private repository private when updating it.
 
-Bind each extracted action to the scope with `video_sample.py --batch BATCH --batch-character ID`, then use `batch.py attach-video`, `review` and `finish` as described in [batch coverage](references/batch-coverage.md). Video acceptance uses its actual source, approved character reference and exported frames; it does not require a mannequin. A single video sample remains `action_study`, and an unbound sample cannot count toward full-character completion.
+Bind each extracted action to the scope with `video_sample.py --batch BATCH --batch-character ID`; for the Veo workflow also pass `--generation-job` so the MP4, design and provider request remain linked. Then use `batch.py attach-video`, `review` and `finish` as described in [batch coverage](references/batch-coverage.md). Video acceptance uses its actual source, approved character reference and exported frames; it does not require a mannequin. A single video sample remains `action_study`, and an unbound sample cannot count toward full-character completion.
 
 ## Alternative direct whole-sheet sample route
 

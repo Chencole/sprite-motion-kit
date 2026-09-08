@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 SCRIPTS = Path(__file__).resolve().parents[1] / 'plugins/sprite-motion-kit/skills/sprite-motion/scripts'
 sys.path.insert(0, str(SCRIPTS))
 import batch
+import video_sample
 
 
 DISCOVERY_AREAS = [
@@ -26,6 +27,7 @@ REVIEW_CHECKS = [
     'transparency_and_crop', 'requested_action', 'source_video',
     'ability_or_weapon_match',
 ]
+WORKFLOW_REVIEW_CHECKS = REVIEW_CHECKS + batch.WORKFLOW_VIDEO_CHECKS
 
 
 def read_json(path):
@@ -154,6 +156,46 @@ class VideoBatchTests(unittest.TestCase):
         (sample / 'index.html').write_text('<p>Synthetic bookkeeping fixture only.</p>', encoding='utf-8')
         return sample
 
+    def workflow_sample(self, batch_path, action):
+        sample = self.sample(batch_path, action)
+        source = sample / 'source-video.mp4'
+        binding = batch.binding(batch_path, 'mage', action)
+        job = self.root / f'workflow-job-{self.serial}-{action}'
+        job.mkdir()
+        design = {'schema': 1, 'design_status': 'authored', 'coverage_binding': binding,
+                  'character_id': 'mage', 'action_id': action, 'background_mode': 'green',
+                  'action_kind': 'loop' if action in ('walk', 'run') else 'one_shot',
+                  'framing': {'safe_rect': [.05, .05, .95, .95],
+                              'minimum_clearance_ratio': .04}}
+        design_sha = hashlib.sha256(json.dumps(design, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        packet = {'schema_version': 1, 'model': 'veo-3.1-fast', 'body': {}, 'options': {},
+                  'reference_count': 1, 'kind': 'video',
+                  'workflow': {'schema': 1, 'kind': 'project_bound_veo_action',
+                               'phase': 'action_video', 'design_sha256': design_sha,
+                               'coverage_binding': binding}}
+        request_sha = hashlib.sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        state = {'schema_version': 1, 'state': 'succeeded', 'request_sha256': request_sha,
+                 'result_urls': ['https://example.test/action.mp4'],
+                 'local_results': [str(source)]}
+        write_json(job / 'request.json', packet)
+        write_json(job / 'job.json', state)
+        write_json(job / 'action-design.json', design)
+        generation, _ = video_sample.validate_generation_job(job, source, binding)
+        manifest = read_json(sample / 'sample.json')
+        indices = manifest['clips'][0]['source_frame_indices']
+        manifest['generation_job'] = generation
+        manifest['background'] = 'green'
+        manifest['generation_interval_review'] = {
+            'checked_all_interval_frames': True, 'source_frame_count': len(indices),
+            'source_frame_indices': indices, 'included_unsampled_frames': False,
+            'safe_rect': design['framing']['safe_rect'],
+            'minimum_clearance_ratio': design['framing']['minimum_clearance_ratio'],
+            'minimum_observed_canvas_clearance': [.1, .1, .1, .1],
+            'all_foreground_inside_contract': True,
+        }
+        write_json(sample / 'sample.json', manifest)
+        return sample, job
+
     def attach_all(self, batch_path):
         samples = {}
         for action in self.actions(batch_path):
@@ -162,12 +204,20 @@ class VideoBatchTests(unittest.TestCase):
         return samples
 
     def review_report(self, batch_path, action):
-        return {
+        report = {
             'artifact_hashes': self.item(batch_path, action)['artifact_hashes'],
             'coverage_binding': batch.binding(batch_path, 'mage', action),
             'checks': {check: True for check in REVIEW_CHECKS},
             'notes': 'Synthetic fixture review for bookkeeping only; no real visual-quality claim.',
         }
+        sample = read_json(batch_path / 'batch.json').get('videos', {}).get('mage', {}).get(action)
+        if sample:
+            manifest = read_json(Path(sample) / 'sample.json')
+            generation = manifest.get('generation_job')
+            if isinstance(generation, dict):
+                report['checks'].update({check: True for check in batch.WORKFLOW_VIDEO_CHECKS})
+                report['action_design_sha256'] = generation['design_sha256']
+        return report
 
     def approve(self, batch_path, action, report=None):
         report_path = self.root / 'review.json'
@@ -391,6 +441,83 @@ class VideoBatchTests(unittest.TestCase):
         report['coverage_binding'] = batch.binding(batch_path, 'mage', 'cast_ice')
         with self.assertRaises(ValueError):
             self.approve(batch_path, 'cast_fire', report)
+
+    def test_workflow_video_requires_generation_binding_and_structured_design_review(self):
+        batch_path = self.create_batch()
+        sample, _ = self.workflow_sample(batch_path, 'walk')
+        batch.attach_video(batch_path, 'mage', 'walk', sample)
+        for missing_check in batch.WORKFLOW_VIDEO_CHECKS:
+            with self.subTest(check=missing_check):
+                report = self.review_report(batch_path, 'walk')
+                del report['checks'][missing_check]
+                with self.assertRaises(ValueError):
+                    self.approve(batch_path, 'walk', report)
+        report = self.review_report(batch_path, 'walk')
+        report['action_design_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'action design hash'):
+            self.approve(batch_path, 'walk', report)
+        self.approve(batch_path, 'walk')
+        self.assertEqual(self.item(batch_path, 'walk')['state'], 'reviewed')
+
+    def test_workflow_generation_job_is_revalidated_after_attachment(self):
+        batch_path = self.create_batch()
+        sample, job = self.workflow_sample(batch_path, 'attack')
+        batch.attach_video(batch_path, 'mage', 'attack', sample)
+        self.approve(batch_path, 'attack')
+        design = read_json(job / 'action-design.json')
+        design['framing']['safe_rect'][0] = .2
+        write_json(job / 'action-design.json', design)
+        state = self.item(batch_path, 'attack')
+        self.assertEqual(state['state'], 'incomplete')
+        self.assertIn('design changed', state['reason'])
+
+    def test_workflow_rejects_gaps_in_complete_interval_review(self):
+        batch_path = self.create_batch()
+        sample, _ = self.workflow_sample(batch_path, 'walk')
+        manifest = read_json(sample / 'sample.json')
+        inspection = manifest['generation_interval_review']
+        inspection.update(source_frame_indices=[0, 1, 3], source_frame_count=3,
+                          included_unsampled_frames=True)
+        write_json(sample / 'sample.json', manifest)
+        with self.assertRaisesRegex(ValueError, 'complete-interval framing'):
+            batch.attach_video(batch_path, 'mage', 'walk', sample)
+
+    def test_workflow_rejects_loop_background_and_endpoint_tampering(self):
+        batch_path = self.create_batch()
+        sample, _ = self.workflow_sample(batch_path, 'death')
+        original = read_json(sample / 'sample.json')
+        for field in ('loop', 'background', 'endpoint', 'clearance'):
+            with self.subTest(field=field):
+                manifest = copy.deepcopy(original)
+                if field == 'loop':
+                    manifest['clips'][0]['loop'] = True
+                elif field == 'background':
+                    manifest['background'] = 'magenta'
+                elif field == 'endpoint':
+                    manifest['generation_interval_review'].update(
+                        source_frame_indices=[0, 1, 2], source_frame_count=3,
+                        included_unsampled_frames=True)
+                else:
+                    manifest['generation_interval_review']['minimum_observed_canvas_clearance'][0] = float('nan')
+                write_json(sample / 'sample.json', manifest)
+                with self.assertRaises(ValueError):
+                    batch.attach_video(batch_path, 'mage', 'death', sample)
+
+    def test_workflow_pixels_must_meet_safe_rect_despite_claimed_review(self):
+        batch_path = self.create_batch()
+        sample, _ = self.workflow_sample(batch_path, 'walk')
+        frame_path = sample / 'walk/frame-000.png'
+        with Image.open(frame_path) as original:
+            frame = original.copy()
+        frame.putpixel((1, 10), (255, 30, 30, 255))
+        frame.save(frame_path)
+        atlas_path = sample / 'walk/atlas.png'
+        with Image.open(atlas_path) as original:
+            atlas = original.copy()
+        atlas.paste(frame, (0, 0))
+        atlas.save(atlas_path)
+        with self.assertRaisesRegex(ValueError, 'safe frame or clearance'):
+            batch.attach_video(batch_path, 'mage', 'walk', sample)
 
     def test_walk_study_can_finish_its_scope_but_never_full_character(self):
         spec = copy.deepcopy(self.spec)

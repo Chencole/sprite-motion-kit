@@ -20,6 +20,14 @@ steps. Character appearance comes from the input; the motion description should
 focus on the actual action. A video model may still change limbs, equipment or
 camera: inspect its output before choosing the extraction interval.
 
+For Veo game-character work, follow the stricter [project-bound Veo workflow](veo-workflow.md).
+The user's selected source route controls preparation: `--existing-image-job`
+reuses approved existing art directly without image generation or a still review,
+and records start-pose/equipment conflicts as risks. A new action-specific still
+and its review are optional when that route is selected. Pass the downloaded Veo job back to the
+extractor with `--generation-job`; this binds the MP4, design, equipment lifecycle
+and coverage requirement through export and batch review.
+
 For walk/run, choose one full two-step cycle with the same anatomical support
 foot and compatible velocity at its two boundaries. Do not mistake two similar
 silhouettes for a complete loop. Attack/fall/jump intervals include anticipation
@@ -50,8 +58,8 @@ and select the nearest unique source frame to each uniform target time.
 It keeps the original canvas and source order, without frame-wise recentering,
 floor alignment, body stretching or optical-flow interpolation. It records output
 target and actual sampling times plus original frame indices. A short interval cannot be silently
-padded. Loop playback omits the duplicate endpoint; one-shot playback holds its
-last extracted frame.
+padded. Loop sampling omits the duplicate endpoint. One-shot sampling includes
+the true interval endpoint so its recovery or settled pose can be held.
 
 This is a single-action review artifact, not completion of a character's full
 action set. Importer tests prove extraction behavior, not natural animation.
@@ -79,6 +87,13 @@ columns, keeps the same canvas, and records these widths. Nonblack extensions
 and enclosed dark detail remain. This is not arbitrary background segmentation;
 dark outlines merging into a black sidebar may be ambiguous and need visual review.
 Leave this option off for videos without those borders.
+
+For inspected compressed dark fringe within those same explicit sidebar columns,
+use `--sidebar-black-threshold 64 --black-sidebars 5 5` with the measured widths.
+The default remains 24; the allowed range is 0-64. Only edge-connected pixels
+whose RGB maximum is within that threshold are removed inside those columns.
+Central character pixels and the global green/magenta thresholds are unchanged.
+Both sampled frames and full-interval review use the same recorded setting.
 
 Source clipping is still an error. A sword already outside the video cannot be
 recovered by extraction. When showing the failure for review, `--draft` explicitly

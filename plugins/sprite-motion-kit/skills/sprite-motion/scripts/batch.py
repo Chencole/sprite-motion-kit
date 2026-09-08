@@ -11,6 +11,11 @@ import motion
 
 DISCOVERY_AREAS = ['state_machine', 'control_inputs', 'abilities', 'weapons', 'damage_death_revival', 'interactions']
 VISUAL_CHECKS = ['appearance', 'whole_body_motion', 'timing_and_transition', 'transparency_and_crop', 'requested_action']
+WORKFLOW_VIDEO_CHECKS = [
+    'action_design_match', 'equipment_state_and_transitions',
+    'ordered_phases_and_game_event', 'loop_or_one_shot_endpoint',
+    'full_interval_framing',
+]
 
 
 def digest(path):
@@ -190,6 +195,43 @@ def video_evidence(sample, character_hash, action, expected_binding):
     source = sample_path(sample, manifest.get('source_video'))
     if digest(source) != manifest.get('source_video_sha256'):
         raise ValueError('Video source changed since extraction')
+    generation = manifest.get('generation_job')
+    interval_review = manifest.get('generation_interval_review')
+    if generation is not None:
+        if not isinstance(generation, dict):
+            raise ValueError('Veo generation evidence must be an object')
+        import video_sample
+        current, design = video_sample.validate_generation_job(
+            generation.get('job'), source, expected_binding)
+        if generation != current:
+            raise ValueError('Veo generation evidence changed since extraction')
+        if (current.get('source_mode') == 'existing_image'
+                and current.get('identity_character_sha256') != character_hash):
+            raise ValueError('Existing-image Veo identity differs from the batch character')
+        if not isinstance(interval_review, dict):
+            raise ValueError('Veo sample is missing its complete-interval framing review')
+        indices = interval_review.get('source_frame_indices')
+        if (interval_review.get('checked_all_interval_frames') is not True
+                or interval_review.get('all_foreground_inside_contract') is not True
+                or not isinstance(indices, list) or not indices
+                or any(type(value) is not int or value < 0 for value in indices)
+                or any(after != before + 1 for before, after in zip(indices, indices[1:]))
+                or interval_review.get('source_frame_count') != len(indices)
+                or interval_review.get('safe_rect') != design['framing']['safe_rect']
+                or interval_review.get('minimum_clearance_ratio') != design['framing']['minimum_clearance_ratio']):
+            raise ValueError('Veo complete-interval framing evidence is invalid or stale')
+        margins = interval_review.get('minimum_observed_canvas_clearance')
+        minimum = design['framing']['minimum_clearance_ratio']
+        safe = design['framing']['safe_rect']
+        required_margins = [safe[0] + minimum, safe[1] + minimum,
+                            1 - safe[2] + minimum, 1 - safe[3] + minimum]
+        if (not isinstance(margins, list) or len(margins) != 4
+                or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                       or not math.isfinite(value) or not 0 <= value <= 1 or value < required - 1e-12
+                       for value, required in zip(margins, required_margins))):
+            raise ValueError('Veo action violates its minimum full-interval canvas clearance')
+    elif interval_review is not None:
+        raise ValueError('Generic video sample cannot claim Veo workflow interval review')
     clips = manifest.get('clips')
     if not isinstance(clips, list) or len(clips) != 1 or not isinstance(clips[0], dict) or clips[0].get('name') != action:
         raise ValueError('Video clip action does not match the required action')
@@ -211,6 +253,19 @@ def video_evidence(sample, character_hash, action, expected_binding):
         raise ValueError('Video source frames must be distinct and ordered')
     if not isinstance(times, list) or len(times) != count or any(type(v) not in (int, float) or not math.isfinite(v) for v in times) or any(a >= b for a, b in zip(times, times[1:])):
         raise ValueError('Video source timestamps must be distinct and ordered')
+    if generation is not None:
+        if clip['loop'] != (design['action_kind'] == 'loop'):
+            raise ValueError('Video loop flag differs from its Veo action design')
+        if manifest.get('background') != design['background_mode']:
+            raise ValueError('Video background differs from its Veo action design')
+        interval_indices = interval_review['source_frame_indices']
+        difference = set(interval_indices) - set(indices)
+        if not set(indices).issubset(set(interval_indices)):
+            raise ValueError('Exported Veo frames are outside the reviewed complete interval')
+        if interval_review.get('included_unsampled_frames') is not bool(difference):
+            raise ValueError('Veo interval review does not accurately record unsampled frames')
+        if indices[0] != interval_indices[0] or (not clip['loop'] and indices[-1] != interval_indices[-1]):
+            raise ValueError('Veo export must preserve the reviewed start and one-shot endpoint')
     paths = clip.get('frames', [])
     if not isinstance(paths, list) or any(not isinstance(p, str) for p in paths) or len(paths) != count or len(set(paths)) != count:
         raise ValueError('Video frame list does not match its count')
@@ -226,11 +281,30 @@ def video_evidence(sample, character_hash, action, expected_binding):
                 bounds = frame.getchannel('A').getbbox()
                 if not bounds or bounds[0] == 0 or bounds[1] == 0 or bounds[2] == tile[0] or bounds[3] == tile[1]:
                     raise ValueError('Video body must retain transparent padding on every canvas edge')
+                if generation is not None:
+                    actual_margins = [bounds[0] / tile[0], bounds[1] / tile[1],
+                                      1 - bounds[2] / tile[0], 1 - bounds[3] / tile[1]]
+                    if any(value < required - 1e-12 for value, required in zip(actual_margins, required_margins)):
+                        raise ValueError('Exported Veo frame violates its designed safe frame or clearance')
                 box = (i * tile[0], 0, (i + 1) * tile[0], tile[1])
                 if atlas.crop(box).tobytes() != frame.tobytes():
                     raise ValueError('Video atlas pixels differ from the reviewed frame sequence')
     files = [sample / 'sample.json', reference, source, atlas_path] + frames
     return {str(p.relative_to(sample)).replace('\\', '/'): digest(p) for p in files}
+
+
+def is_workflow_video_sample(sample):
+    manifest = motion.read(Path(sample).resolve() / 'sample.json')
+    return isinstance(manifest, dict) and isinstance(manifest.get('generation_job'), dict)
+
+
+def workflow_video_design_sha(sample):
+    manifest = motion.read(Path(sample).resolve() / 'sample.json')
+    generation = manifest.get('generation_job', {}) if isinstance(manifest, dict) else {}
+    value = generation.get('design_sha256') if isinstance(generation, dict) else None
+    if not isinstance(value, str) or not re.fullmatch(r'[0-9a-f]{64}', value):
+        raise ValueError('Workflow video sample is missing its action design hash')
+    return value
 
 
 def action_evidence(root, data, scope, character, action):
@@ -338,7 +412,7 @@ def evidence(job, character_hash, action):
     return {str(p.relative_to(job)): digest(p) for p in files}
 
 
-def check_review(report, hashes, expected_binding, is_video):
+def check_review(report, hashes, expected_binding, is_video, workflow_design_sha256=None):
     if not isinstance(report, dict) or not isinstance(report.get('checks'), dict):
         raise ValueError('Visual review and checks must be objects')
     if report.get('artifact_hashes') != hashes:
@@ -346,6 +420,10 @@ def check_review(report, hashes, expected_binding, is_video):
     if expected_binding and report.get('coverage_binding') != expected_binding:
         raise ValueError('Review must identify the exact gameplay requirement binding')
     checks = VISUAL_CHECKS + (['source_video', 'ability_or_weapon_match'] if is_video else [])
+    if workflow_design_sha256:
+        checks += WORKFLOW_VIDEO_CHECKS
+        if report.get('action_design_sha256') != workflow_design_sha256:
+            raise ValueError('Workflow video review must identify the exact action design hash')
     for check in checks:
         if report.get('checks', {}).get(check) is not True:
             raise ValueError('Visual check not passed: ' + check)
@@ -364,8 +442,10 @@ def review(batch, character, action, report):
         raise ValueError('Duplicate action evidence: ' + '; '.join(duplicates.values()))
     hashes = action_evidence(root, data, scope, character, action)
     report = motion.read(report)
+    sample = data.get('videos', {}).get(character, {}).get(action)
     check_review(report, hashes, binding(root, character, action) if data['schema'] == 2 else None,
-                 bool(data.get('videos', {}).get(character, {}).get(action)))
+                 bool(sample), workflow_video_design_sha(sample)
+                 if sample and is_workflow_video_sample(sample) else None)
     data['reviews'].setdefault(character, {})[action] = report
     motion.write(root / 'batch.json', data)
     return status(root)
@@ -392,7 +472,9 @@ def status(batch):
                     item['artifact_hashes'] = hashes
                     if record:
                         try:
-                            check_review(record, hashes, expected, bool(sample))
+                            check_review(record, hashes, expected, bool(sample),
+                                         workflow_video_design_sha(sample)
+                                         if sample and is_workflow_video_sample(sample) else None)
                             item['state'] = 'reviewed'
                             current_evidence[character + '/' + action] = record
                         except ValueError as exc:

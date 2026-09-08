@@ -43,7 +43,7 @@ class VideoSampleTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def make_video(self, background='magenta', count=12, *, heights=None, lossy=False,
-                   edge=False, durations=None, duplicate_endpoint=False):
+                   edge=False, edge_indices=None, durations=None, duplicate_endpoint=False):
         colors = {'magenta': (255, 0, 255, 255), 'green': (0, 255, 0, 255),
                   'alpha': (83, 122, 17, 0), 'opaque': (35, 35, 35, 255)}
         source = self.root / 'source'
@@ -53,7 +53,7 @@ class VideoSampleTests(unittest.TestCase):
             pose = 0 if duplicate_endpoint and i == count - 1 else i
             im = Image.new('RGBA', (96, 96), colors[background])
             draw = ImageDraw.Draw(im)
-            x = 0 if edge else 16 + pose
+            x = 0 if edge or (edge_indices and i in edge_indices) else 16 + pose
             y = 48 - (heights[i] if heights else 0)
             draw.rectangle((x, y, x + 27, y + 30), fill=(25, 45, 200, 255))
             # The key color inside the costume must survive background removal.
@@ -93,14 +93,56 @@ class VideoSampleTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.root.glob('.video-sample-*')), [])
 
+    def make_bound_batch(self, character, action='walk'):
+        import batch
+        specification = self.root / f'{action}-scope.json'
+        entry = {'character': str(character), 'discovery': {'project': 'Synthetic Veo workflow fixture',
+                 'inspections': [{'area': area, 'status': 'inspected', 'source': 'Synthetic source',
+                                  'notes': 'Synthetic extraction contract fixture.'}
+                                 for area in batch.DISCOVERY_AREAS]},
+                 'requirements': [{'id': 'required_action', 'kind': 'action',
+                                   'game_id': 'state.' + action, 'purpose': action + ' animation',
+                                   'source': 'Synthetic source', 'applicable': True}],
+                 'action_map': {'required_action': action}}
+        specification.write_text(json.dumps({'request': 'Test one project-bound Veo action',
+                                              'scope_mode': 'action_study',
+                                              'study_reason': 'Extraction integration test',
+                                              'characters': {'mage': entry}}), encoding='utf-8')
+        destination = self.root / f'{action}-batch'
+        batch.create(specification, destination)
+        return destination
+
+    def make_generation_job(self, video, batch_path, action='walk', *, background='green'):
+        import batch
+        job = self.root / f'{action}-generation-job'
+        job.mkdir()
+        binding = batch.binding(batch_path, 'mage', action)
+        design = {'schema': 1, 'design_status': 'authored', 'coverage_binding': binding,
+                  'character_id': 'mage', 'action_id': action, 'background_mode': background,
+                  'action_kind': 'loop' if action == 'walk' else 'one_shot',
+                  'framing': {'safe_rect': [.1, .1, .9, .9], 'minimum_clearance_ratio': .05}}
+        design_sha = hashlib.sha256(json.dumps(design, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        packet = {'schema_version': 1, 'model': 'veo-3.1-fast', 'body': {}, 'options': {},
+                  'reference_count': 1, 'kind': 'video',
+                  'workflow': {'schema': 1, 'kind': 'project_bound_veo_action',
+                               'phase': 'action_video', 'design_sha256': design_sha,
+                               'coverage_binding': binding}}
+        request_sha = hashlib.sha256(json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        state = {'schema_version': 1, 'state': 'succeeded', 'request_sha256': request_sha,
+                 'result_urls': ['https://example.test/action.mp4'],
+                 'local_results': [str(Path(video).resolve())]}
+        for name, value in [('request.json', packet), ('job.json', state), ('action-design.json', design)]:
+            (job / name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
+        return job
+
     def test_subframe_start_does_not_shift_later_target_times(self):
         video = self.make_video()
         self.export(video, start=.13, duration=.6, count=3)
         clip = self.report()['clips'][0]
-        self.assertEqual(clip['sampling_times_seconds'], [.13, .33, .53])
-        self.assertEqual(clip['source_times_seconds'], [.2, .3, .5])
-        self.assertEqual(clip['source_frame_indices'], [2, 3, 5])
-        for path, index in zip(clip['frames'], [2, 3, 5]):
+        self.assertEqual(clip['sampling_times_seconds'], [.13, .43, .73])
+        self.assertEqual(clip['source_times_seconds'], [.2, .4, .7])
+        self.assertEqual(clip['source_frame_indices'], [2, 4, 7])
+        for path, index in zip(clip['frames'], [2, 4, 7]):
             with Image.open(self.output / path) as frame:
                 self.assertEqual(frame.getchannel('A').getbbox()[0], 16 + index)
 
@@ -130,12 +172,13 @@ class VideoSampleTests(unittest.TestCase):
                 original[original[:, :, 3] == 0] = 0
                 np.testing.assert_array_equal(np.array(frame), original)
                 self.assertIn(96, np.unique(np.array(frame)[:, :, 3]))
-        self.assertEqual(clip['bounds'][0][3] - clip['bounds'][2][3], 32)
+        self.assertEqual(clip['bounds'][0][3] - clip['bounds'][2][3], 25)
 
     def test_green_key_removes_background_and_preserves_costume_color(self):
         video = self.make_video(background='green')
         self.export(video, background='green')
-        for index, path in zip([0, 2, 4, 6, 8], self.report()['clips'][0]['frames']):
+        clip = self.report()['clips'][0]
+        for index, path in zip(clip['source_frame_indices'], clip['frames']):
             with Image.open(self.output / path) as frame:
                 self.assertEqual(frame.getpixel((0, 0)), (0, 0, 0, 0))
                 self.assertEqual(frame.getpixel((27 + index, 58)), (0, 255, 0, 255))
@@ -221,14 +264,171 @@ class VideoSampleTests(unittest.TestCase):
         video = self.make_video(count=4, durations=[.2, .4, .2, .2])
         self.export(video, count=4)
         clip = self.report()['clips'][0]
-        self.assertEqual(clip['sampling_times_seconds'], [0, .25, .5, .75])
-        self.assertEqual(clip['source_times_seconds'], [0, .2, .6, .8])
-        self.assertEqual(clip['source_frame_indices'], [0, 1, 2, 3])
+        self.assertEqual(clip['sampling_times_seconds'], [0, 1 / 3, 2 / 3, 1])
+        self.assertEqual(clip['source_times_seconds'], [0, .2, .6, 1.0])
+        self.assertEqual(clip['source_frame_indices'], [0, 1, 2, 4])
 
     def test_exact_midpoint_ties_choose_earlier_source_frame(self):
         video = self.make_video()
-        self.export(video, duration=.5, count=2)
-        self.assertEqual(self.report()['clips'][0]['source_frame_indices'], [0, 2])
+        self.export(video, duration=.5, count=3)
+        self.assertEqual(self.report()['clips'][0]['source_frame_indices'], [0, 2, 5])
+
+    def test_one_shot_includes_true_endpoint_while_loop_excludes_it(self):
+        video = self.make_video(count=12)
+        self.export(video, action='attack', duration=1, count=5)
+        one_shot = self.report()['clips'][0]
+        self.assertEqual(one_shot['sampling_times_seconds'], [0, .25, .5, .75, 1])
+        self.assertEqual(one_shot['source_frame_indices'][-1], 10)
+        self.assertIn('[start, end]', self.report()['sampling'])
+
+        self.output = self.root / 'loop-result'
+        self.export(video, action='walk', duration=1, count=5, loop=True)
+        loop = self.report()['clips'][0]
+        self.assertEqual(loop['sampling_times_seconds'], [0, .2, .4, .6, .8])
+        self.assertEqual(loop['source_frame_indices'][-1], 8)
+        self.assertIn('[start, end)', self.report()['sampling'])
+
+    def test_project_bound_veo_job_records_generation_and_checks_every_interval_frame(self):
+        video = self.make_video(background='green', lossy=True)
+        character = self.root / 'source/frame-000.png'
+        batch_path = self.make_bound_batch(character)
+        job = self.make_generation_job(video, batch_path)
+        self.export(video, action='walk', loop=True, background='green',
+                    batch=batch_path, batch_character='mage', generation_job=job)
+        report = self.report()
+        generation = report['generation_job']
+        self.assertEqual(generation['kind'], 'project_bound_veo_action')
+        self.assertEqual(generation['phase'], 'action_video')
+        self.assertEqual(generation['model'], 'veo-3.1-fast')
+        self.assertEqual(generation['source_video_sha256'], report['source_video_sha256'])
+        inspection = report['generation_interval_review']
+        self.assertTrue(inspection['checked_all_interval_frames'])
+        self.assertTrue(inspection['included_unsampled_frames'])
+        self.assertGreater(inspection['source_frame_count'], report['clips'][0]['count'])
+        self.assertTrue(inspection['all_foreground_inside_contract'])
+
+    def test_project_bound_veo_checks_unsampled_frames_for_clipping(self):
+        video = self.make_video(background='green', lossy=True, edge_indices={1})
+        character = self.root / 'source/frame-000.png'
+        batch_path = self.make_bound_batch(character)
+        job = self.make_generation_job(video, batch_path)
+        self.assert_atomic_failure(
+            video, 'perimeter|safe frame', action='walk', loop=True, background='green',
+            batch=batch_path, batch_character='mage', generation_job=job)
+
+    def test_bound_death_preserves_final_body_and_rejects_loop_export(self):
+        import batch
+        video = self.make_video(background='green', lossy=True,
+                                heights=[4, 4, 4, 4, 4, 3, 2, 1, 0, 0, 0, 0])
+        character = self.root / 'source/frame-000.png'
+        batch_path = self.make_bound_batch(character, 'death')
+        job = self.make_generation_job(video, batch_path, 'death')
+        options = dict(action='death', background='green', batch=batch_path,
+                       batch_character='mage', generation_job=job)
+        self.assert_atomic_failure(video, 'loop flag', loop=True, **options)
+        self.export(video, loop=False, **options)
+        clip = self.report()['clips'][0]
+        self.assertEqual(clip['source_frame_indices'][-1], 10)
+        self.assertFalse(clip['loop'])
+        with Image.open(self.output / clip['frames'][-1]) as final_frame:
+            bounds = final_frame.getchannel('A').getbbox()
+            self.assertEqual(final_frame.size, (96, 96))
+            self.assertGreaterEqual(bounds[2] - bounds[0], 28)
+            self.assertGreaterEqual(bounds[3] - bounds[1], 31)
+        attached = batch.attach_video(batch_path, 'mage', 'death', self.output)
+        item = attached['actions'][0]
+        review = self.root / 'death-review.json'
+        review.write_text(json.dumps({
+            'artifact_hashes': item['artifact_hashes'], 'coverage_binding': item['coverage_binding'],
+            'action_design_sha256': self.report()['generation_job']['design_sha256'],
+            'checks': {key: True for key in batch.VISUAL_CHECKS + batch.WORKFLOW_VIDEO_CHECKS
+                       + ['source_video', 'ability_or_weapon_match']},
+            'notes': 'Synthetic endpoint and batch integration fixture, not natural death motion.'}), encoding='utf-8')
+        batch.review(batch_path, 'mage', 'death', review)
+        self.assertTrue(batch.finish(batch_path)['scope_complete'])
+
+    def test_bound_walk_rejects_one_shot_export(self):
+        video = self.make_video(background='green', lossy=True)
+        batch_path = self.make_bound_batch(self.root / 'source/frame-000.png')
+        job = self.make_generation_job(video, batch_path)
+        self.assert_atomic_failure(video, 'loop flag', action='walk', loop=False, background='green',
+                                   batch=batch_path, batch_character='mage', generation_job=job)
+
+    def test_existing_image_video_retains_framing_and_batch_binding(self):
+        import batch
+        video = self.make_video(background='green', lossy=True)
+        character = self.root / 'source/frame-000.png'
+        batch_path = self.make_bound_batch(character)
+        job = self.make_generation_job(video, batch_path)
+        packet = json.loads((job / 'request.json').read_text(encoding='utf-8'))
+        state = json.loads((job / 'job.json').read_text(encoding='utf-8'))
+        character_sha = hashlib.sha256(character.read_bytes()).hexdigest()
+        source = {'url': 'https://example.test/original.png', 'request_sha256': '1' * 64,
+                  'local_sha256': character_sha, 'character_sha256': character_sha,
+                  'character_pixel_sha256': '2' * 64}
+        packet['body']['images'] = [source['url']]
+        packet['workflow'].update(source_mode='existing_image', identity_source=source,
+                                  identity_character_sha256=character_sha,
+                                  source_risk_notes='Synthetic direct image reuse; no still review.')
+        state['request_sha256'] = video_sample._json_digest(packet)
+        (job / 'request.json').write_text(json.dumps(packet), encoding='utf-8')
+        (job / 'job.json').write_text(json.dumps(state), encoding='utf-8')
+        self.export(video, action='walk', loop=True, background='green',
+                    batch=batch_path, batch_character='mage', generation_job=job)
+        self.assertEqual(self.report()['generation_job']['source_mode'], 'existing_image')
+        self.assertTrue(self.report()['generation_interval_review']['checked_all_interval_frames'])
+        result = batch.attach_video(batch_path, 'mage', 'walk', self.output)
+        self.assertFalse(result['scope_complete'])
+
+    def test_generation_binding_rejects_wrong_video_and_coverage(self):
+        import batch
+        video = self.make_video(background='green', lossy=True)
+        batch_path = self.make_bound_batch(self.root / 'source/frame-000.png')
+        job = self.make_generation_job(video, batch_path)
+        binding = batch.binding(batch_path, 'mage', 'walk')
+        changed = {**binding, 'action': 'death'}
+        with self.assertRaisesRegex(ValueError, 'coverage binding'):
+            video_sample.validate_generation_job(job, video, changed)
+        other_video = self.root / 'unrelated.mp4'
+        other_video.write_bytes(b'Synthetic unrelated video bytes')
+        with self.assertRaisesRegex(ValueError, 'not the downloaded result'):
+            video_sample.validate_generation_job(job, other_video, binding)
+
+    def test_full_interval_inspection_rejects_missing_decoded_frames(self):
+        with self.assertRaisesRegex(ValueError, 'every source frame'):
+            video_sample._check_workflow_interval(
+                [], [{'index': 0}], (96, 96), background='green', key_scope='edge-connected',
+                black_sidebars=None, safe_rect=[.1, .1, .9, .9], clearance=.05, sampled_indices=[0])
+
+    def test_generation_job_must_match_source_model_design_binding_and_background(self):
+        video = self.make_video(background='green', lossy=True)
+        character = self.root / 'source/frame-000.png'
+        batch_path = self.make_bound_batch(character)
+        job = self.make_generation_job(video, batch_path)
+        self.assert_atomic_failure(
+            video, 'Background extraction', action='walk', loop=True, background='magenta',
+            batch=batch_path, batch_character='mage', generation_job=job)
+
+        packet = json.loads((job / 'request.json').read_text(encoding='utf-8'))
+        state = json.loads((job / 'job.json').read_text(encoding='utf-8'))
+        original_packet, original_state = dict(packet), dict(state)
+        packet['model'] = 'seedance-2.0-fast'
+        state['request_sha256'] = hashlib.sha256(
+            json.dumps(packet, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        (job / 'request.json').write_text(json.dumps(packet), encoding='utf-8')
+        (job / 'job.json').write_text(json.dumps(state), encoding='utf-8')
+        self.assert_atomic_failure(
+            video, 'project-bound Veo', action='walk', loop=True, background='green',
+            batch=batch_path, batch_character='mage', generation_job=job)
+        (job / 'request.json').write_text(json.dumps(original_packet), encoding='utf-8')
+        (job / 'job.json').write_text(json.dumps(original_state), encoding='utf-8')
+
+        design = json.loads((job / 'action-design.json').read_text(encoding='utf-8'))
+        design['framing']['safe_rect'][0] = .2
+        (job / 'action-design.json').write_text(json.dumps(design), encoding='utf-8')
+        self.assert_atomic_failure(
+            video, 'design changed', action='walk', loop=True, background='green',
+            batch=batch_path, batch_character='mage', generation_job=job)
 
     def test_opaque_input_fails_and_cleans_staging_directory(self):
         video = self.make_video(background='opaque')

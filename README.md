@@ -46,6 +46,15 @@ unsupported overrides fail before submission rather than pretending to change
 the requested model tier. Read the current provider quote before each authorized
 trial and report the actual returned video length and charge separately.
 
+The reusable Veo route is project-bound rather than a free-form prompt wrapper.
+The AI derives each action from the game's actual state and ability data, records
+ordered phases and equipment states. Users can directly reuse verified existing
+art with `prepare-video --existing-image-job`, without another image generation
+or still review; weapon/start-pose conflicts are recorded as risks. When a new
+action-specific first frame is selected, its visual review remains required. Identity images,
+start-still reviews, Veo jobs and extracted MP4 frames remain hash-linked to the
+same coverage requirement. See the [Veo workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/veo-workflow.md).
+
 The reusable [whole-sheet sample workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/whole-sheet-samples.md)
 now packages the direct host-image approach: a complete generated character sheet,
 component-aware transparent extraction, common coordinates and a browser reviewer.

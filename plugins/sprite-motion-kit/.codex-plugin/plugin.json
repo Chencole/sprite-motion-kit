@@ -1,7 +1,7 @@
 {
   "name": "sprite-motion-kit",
-  "version": "0.5.8+codex.20260908032322",
-  "description": "Custom game actions, 3D references, optional MXAPI image-to-Seedance video generation, transparent sprite export and visual review.",
+  "version": "0.5.8+codex.20260908043122",
+  "description": "Project-derived game actions, 3D references, optional MXAPI image-to-Seedance or Veo video generation, transparent sprite export and visual review.",
   "author": {
     "name": "Chencole",
     "url": "https://github.com/Chencole"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "Sprite Motion Kit",
     "shortDescription": "Create character actions from poses or image-to-video.",
-    "longDescription": "Design custom character motions or use your MXAPI image and Seedance account for continuous action videos. Local tools render references, extract transparent frames and synchronize visual review. No account, model weights or credits bundled; generated motion still needs review.",
+    "longDescription": "Derive complete character actions from a game project, design custom motion, or use your MXAPI image, Seedance and Veo account for continuous action videos. Veo actions reuse verified existing art directly, or optionally use reviewed start stills, with structured equipment states. Local tools extract transparent frames and synchronize visual review. No account, model weights or credits bundled; generated motion still needs review.",
     "developerName": "Chencole",
     "category": "Productivity",
     "capabilities": [
@@ -30,6 +30,7 @@
     "privacyPolicyURL": "https://github.com/Chencole/sprite-motion-kit/blob/main/docs/PRIVACY.md",
     "termsOfServiceURL": "https://github.com/Chencole/sprite-motion-kit/blob/main/docs/TERMS.md",
     "defaultPrompt": [
+      "Use my existing MXAPI account and approved game-character artwork to prepare project-bound Veo actions without new image generation. Derive each action from the game, record source pose or equipment conflicts, then export transparent frames for review.",
       "Use my existing image and Seedance account to make a side-view character-action video, then export transparent frames and show the original/video-frame comparison. Keep the repository private and test one sample first.",
       "Create a body-appropriate monster collapse with its own rig and key poses.",
       "Author a custom motion plan for this character and show the 3D reference before generating its animation."
