@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -13,6 +14,17 @@ import batch
 import motion
 
 
+def mapped_character(actions):
+    return {'character': 'character.png', 'required_actions': actions,
+            'discovery': {'project': 'Synthetic bookkeeping project', 'inspections': [
+                {'area': area, 'status': 'inspected', 'source': 'test fixture requirements',
+                 'notes': 'Synthetic project discovery evidence for contract tests.'} for area in batch.DISCOVERY_AREAS]},
+            'requirements': [{'id': a, 'kind': 'action', 'game_id': 'state.' + a,
+                              'purpose': 'Test the separately requested ' + a, 'source': 'test fixture state inventory',
+                              'applicable': True} for a in actions],
+            'action_map': {a: a for a in actions}}
+
+
 class BatchTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
@@ -25,7 +37,7 @@ class BatchTests(unittest.TestCase):
         Image.new('RGBA', (24,40), 'blue').save(self.character)
         self.spec = self.root / 'scope.json'
         motion.write(self.spec, {'request':'Walk, run, two attacks and death for the knight', 'characters':{
-            'knight': {'character':'character.png','required_actions':['walk','run','attack','death','jump','thrust','overhead_cut']}}})
+            'knight': mapped_character(['walk','run','attack','death','jump','thrust','overhead_cut'])}})
         self.batch = self.root / 'batch'; batch.create(self.spec, self.batch)
 
     def job(self, actions):
@@ -45,6 +57,15 @@ class BatchTests(unittest.TestCase):
             motion.contract_module().crop_template(raw,4,2,8,crop_path)
             crop=motion.read(crop_path);crop.update(reviewed=True,notes='Synthetic 4x2 fixture has no gutters or margins.');motion.write(crop_path,crop)
         for a in actions:
+            # Different actions need distinct artifacts; shape stays fixed to isolate
+            # bookkeeping from the pose-quality fixtures used by these old-job tests.
+            color = tuple(hashlib.sha256(a.encode()).digest()[:3])
+            for i in range(8):
+                x=i%4*100; y=i//4*100; d.rectangle((x+30,y+15,x+65,y+85), fill=color)
+            im.save(raw)
+            crop = motion.read(crop_path)
+            crop['source_sha256'] = motion.contract_module().digest(raw)
+            motion.write(crop_path, crop)
             jd=motion.read(job/'job.json')
             report=motion.quality_module().observations_template(job,jd,a,raw,motion.mannequin_module())
             report['frames']=[{'frame':i,'points':{'a':[30,15],'b':[65,15]}} for i in range(8)]
@@ -58,7 +79,7 @@ class BatchTests(unittest.TestCase):
     def approve(self, action):
         item = next(e for e in batch.status(self.batch)['actions'] if e['action']==action)
         report = self.root / 'report.json'
-        motion.write(report, {'artifact_hashes':item['artifact_hashes'], 'checks':{
+        motion.write(report, {'artifact_hashes':item['artifact_hashes'], 'coverage_binding':item['coverage_binding'], 'checks':{
             k:True for k in ['appearance','whole_body_motion','timing_and_transition','transparency_and_crop','requested_action']},
             'notes':'Synthetic fixture reviewed for this test; not a real art-quality claim.'})
         batch.review(self.batch, 'knight', action, report)
@@ -122,23 +143,23 @@ class BatchTests(unittest.TestCase):
         for a in ['walk','run','attack','death','jump','thrust','overhead_cut']:self.approve(a)
         self.assertTrue(batch.finish(self.batch)['complete'])
 
-    def test_full_character_inserts_five_basics_and_preserves_extras(self):
-        motion.write(self.spec, {'request':'Full character plus fire magic','characters':{
-            'knight':{'character':'character.png','required_actions':['cast_fire']}}})
+    def test_full_character_follows_discovered_actions_without_a_fixed_five(self):
+        motion.write(self.spec, {'request':'Complete stationary spell turret for this project','characters':{
+            'knight':mapped_character(['cast_fire'])}})
         state=batch.create(self.spec,self.root/'full-extra')
-        self.assertEqual([a['action'] for a in state['actions']],batch.BASE_ACTIONS+['cast_fire'])
-        self.assertEqual(state['required'],6)
-        with self.assertRaisesRegex(ValueError,'jump: missing_job'):batch.finish(self.root/'full-extra')
+        self.assertEqual([a['action'] for a in state['actions']],['cast_fire'])
+        self.assertEqual(state['required'],1)
+        with self.assertRaisesRegex(ValueError,'cast_fire: missing_job'):batch.finish(self.root/'full-extra')
 
     def test_single_study_is_explicit_and_cannot_claim_full_character(self):
         motion.write(self.spec, {'request':'Only inspect jump','scope_mode':'action_study','study_reason':'User requested jump-only diagnostic',
-            'characters':{'knight':{'character':'character.png','required_actions':['jump']}}})
+            'characters':{'knight':mapped_character(['jump'])}})
         state=batch.create(self.spec,self.root/'study')
         self.assertEqual(state['scope_mode'],'action_study');self.assertEqual(state['required'],1)
 
     def test_study_without_reason_cannot_silently_drop_full_scope(self):
         motion.write(self.spec, {'request':'Complete character','scope_mode':'action_study',
-            'characters':{'knight':{'character':'character.png','required_actions':['walk']}}})
+            'characters':{'knight':mapped_character(['walk'])}})
         with self.assertRaisesRegex(ValueError,'explicit reason'):batch.create(self.spec,self.root/'invalid-study')
 
 

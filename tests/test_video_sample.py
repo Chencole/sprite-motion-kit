@@ -183,6 +183,8 @@ class VideoSampleTests(unittest.TestCase):
         self.assertEqual(report['background'], 'magenta')
         self.assertFalse(report['pose_correspondence_verified'])
         self.assertFalse(report['game_assets_replaced'])
+        self.assertEqual(report['scope_mode'], 'action_study')
+        self.assertFalse(report['full_character_complete'])
         self.assertFalse(report['clips'][0]['accepted_by_user'])
         self.assertEqual(result['preview'], str(self.output / 'index.html'))
         self.assertFalse((self.output / 'decoded').exists())
@@ -261,6 +263,44 @@ class VideoSampleTests(unittest.TestCase):
     def test_invalid_origin_fails_atomically(self):
         video = self.make_video()
         self.assert_atomic_failure(video, 'outside', origin=[96, 80])
+
+    def test_bound_video_export_connects_to_batch_review_without_becoming_full_character(self):
+        import batch
+        video = self.make_video()
+        reference = self.root / 'source/frame-000.png'
+        specification = self.root / 'scope.json'
+        entry = {'character': str(reference), 'discovery': {'project': 'Synthetic movement study', 'inspections': [
+            {'area': area, 'status': 'inspected', 'source': 'Synthetic test scope', 'notes': 'Walk-only study fixture.'}
+            for area in batch.DISCOVERY_AREAS]},
+            'requirements': [{'id': 'move', 'kind': 'action', 'game_id': 'controller.walk',
+                              'purpose': 'Walk input', 'source': 'Synthetic controller', 'applicable': True}],
+            'action_map': {'move': 'walk'}}
+        specification.write_text(json.dumps({'request': 'Inspect one walk sample', 'scope_mode': 'action_study',
+                                             'study_reason': 'Only this diagnostic was requested', 'characters': {'mage': entry}}), encoding='utf-8')
+        destination = self.root / 'batch'
+        batch.create(specification, destination)
+        self.export(video, action='walk', batch=destination, batch_character='mage')
+        report = self.report()
+        self.assertEqual(report['coverage_binding'], batch.binding(destination, 'mage', 'walk'))
+        self.assertEqual((self.output / report['character_reference']).read_bytes(), reference.read_bytes())
+        state = batch.attach_video(destination, 'mage', 'walk', self.output)
+        self.assertFalse(state['scope_complete'])
+        item = state['actions'][0]
+        approval = self.root / 'review.json'
+        approval.write_text(json.dumps({'artifact_hashes': item['artifact_hashes'], 'coverage_binding': item['coverage_binding'],
+                                        'checks': {k: True for k in batch.VISUAL_CHECKS + ['source_video', 'ability_or_weapon_match']},
+                                        'notes': 'Synthetic export integration test; not an art-quality claim.'}), encoding='utf-8')
+        batch.review(destination, 'mage', 'walk', approval)
+        result = batch.finish(destination)
+        self.assertTrue(result['scope_complete'])
+        self.assertFalse(result['complete'])
+        self.assertFalse(result['full_character_complete'])
+
+    def test_invalid_character_reference_is_rejected_before_export(self):
+        video = self.make_video()
+        reference = self.root / 'not-image.png'
+        reference.write_bytes(b'not an image')
+        self.assert_atomic_failure(video, 'readable image', character_image=reference)
 
 
 if __name__ == '__main__':

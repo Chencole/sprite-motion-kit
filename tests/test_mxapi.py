@@ -28,6 +28,87 @@ class FakeClient:
 
 
 class MxapiTest(unittest.TestCase):
+    def test_mini_fixed_route_and_smallest_defaults_submit_then_poll(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / 'mini'
+            mxapi.prepare(job, 'seedance-2.0-mini', 'Walk in place.',
+                          ['https://example.com/character.png'])
+            packet, _ = mxapi.read_job(job)
+            body = packet['body']
+            self.assertEqual(body['resolution'], '480p')
+            self.assertEqual(body['duration'], 4)
+            self.assertEqual(body['content'][0], {'type': 'text', 'text': 'Walk in place.'})
+            self.assertEqual(body['content'][1], {'type': 'image_url',
+                             'image_url': {'url': 'https://example.com/character.png'}, 'role': 'first_frame'})
+            self.assertNotIn('model', body)
+            self.assertNotIn('watermark', body)  # Not a documented Mini field.
+            self.assertEqual(set(body), {'content', 'ratio', 'resolution', 'duration', 'generate_audio'})
+            self.assertFalse(body['generate_audio'])
+            client = FakeClient()
+            mxapi.submit(job, client)
+            self.assertEqual(client.calls, [('/api/v2/video/seedance2-mini', {'body': body})])
+            polling = FakeClient({'data': {'status': 'succeeded', 'video_url': 'https://example.com/video.mp4'}})
+            self.assertEqual(mxapi.poll(job, polling)['state'], 'succeeded')
+            self.assertEqual(polling.calls, [('/api/v2/video/task', {'query': {'task_id': 'task-one'}})])
+
+    def test_mini_text_first_last_and_explicit_reference_roles(self):
+        text_only = mxapi.build_payload('seedance-2.0-mini', 'Walk.')
+        self.assertEqual(text_only['content'], [{'type': 'text', 'text': 'Walk.'}])
+        refs = ['https://example.com/first.png', 'https://example.com/last.png']
+        endpoints = mxapi.build_payload('seedance-2.0-mini', 'Walk.', refs, first_last=True,
+                                       resolution='720p', duration=15, ratio='adaptive')
+        self.assertEqual([x['role'] for x in endpoints['content'][1:]], ['first_frame', 'last_frame'])
+        self.assertEqual([x['image_url']['url'] for x in endpoints['content'][1:]], refs)
+        self.assertEqual((endpoints['resolution'], endpoints['duration'], endpoints['ratio']), ('720p', 15, 'adaptive'))
+        for count in (1, 2):
+            reference = mxapi.build_payload('seedance-2.0-mini', 'Walk.', refs[:count], reference_role='reference_image')
+            self.assertEqual([x['role'] for x in reference['content'][1:]], ['reference_image'] * count)
+
+    def test_mini_unsupported_sizes_durations_and_legacy_text_stop_before_job(self):
+        invalid_options = ([{'resolution': size} for size in ('1080p', '4K', 'mini')]
+                           + [{'duration': duration} for duration in (0, 3, 16, -1, 4.5, True)]
+                           + [{'ratio': ratio} for ratio in ('3:2', '2:3')])
+        with tempfile.TemporaryDirectory() as tmp:
+            for index, options in enumerate(invalid_options):
+                with self.subTest(options=options):
+                    job = Path(tmp) / str(index)
+                    with self.assertRaises(mxapi.ProviderError):
+                        mxapi.prepare(job, 'seedance-2.0-mini', 'Walk.', **options)
+                    self.assertFalse(job.exists())
+        for text in ('Walk. --dur 4', '--rs 480p walk', 'Walk. --ratio=1:1'):
+            with self.assertRaises(mxapi.ProviderError):
+                mxapi.build_payload('seedance-2.0-mini', text)
+
+    def test_mini_endpoint_roles_require_explicit_consistent_mode(self):
+        refs = ['https://example.com/first.png', 'https://example.com/last.png']
+        cases = [(refs, {}), (refs[:1], {'first_last': True}), ([], {'first_last': True}),
+                 (refs, {'reference_role': 'first_frame'}), ([], {'reference_role': 'reference_image'}),
+                 (refs, {'first_last': True, 'reference_role': 'reference_image'}),
+                 (refs + refs[:1], {'reference_role': 'reference_image'})]
+        for references, options in cases:
+            with self.subTest(options=options, count=len(references)), self.assertRaises(mxapi.ProviderError):
+                mxapi.build_payload('seedance-2.0-mini', 'Walk.', references, **options)
+        # A Mini-only mode must not change old model semantics or route selection.
+        with self.assertRaises(mxapi.ProviderError):
+            mxapi.build_payload('seedance-2.0-fast', 'Walk.', refs[:1], reference_role='first_frame')
+
+    def test_mini_cli_preparation_preserves_model_and_role_selection(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt, job = Path(tmp) / 'prompt.txt', Path(tmp) / 'job'
+            prompt.write_text('Walk in place.', encoding='utf-8')
+            argv = ['mxapi.py', 'prepare', '--model', 'seedance-2.0-mini', '--prompt-file', str(prompt),
+                    '--reference', 'https://example.com/image.png', '--reference-role', 'reference_image', '--job', str(job)]
+            with patch('sys.argv', argv), patch('mxapi.Client.request', side_effect=AssertionError('Prepare is local')):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(mxapi.main(), 0)
+            packet, state = mxapi.read_job(job)
+            self.assertEqual(packet['model'], 'seedance-2.0-mini')
+            self.assertEqual(packet['body']['content'][1]['role'], 'reference_image')
+            self.assertEqual((packet['body']['resolution'], packet['body']['duration']), ('480p', 4))
+            self.assertEqual(state['state'], 'prepared')
+
     def test_https_download_works_with_desktop_fake_dns_not_private_targets(self):
         def result(address):
             return [(2, 1, 6, '', (address, 443))]

@@ -26,6 +26,13 @@ silhouettes for a complete loop. Attack/fall/jump intervals include anticipation
 and settling as required. Death holds a full-size final body. Different actions
 normally use separate clips; choose the set from the game's actual requirements.
 
+Before generating a full character, the AI follows [batch coverage](batch-coverage.md):
+inspect that project's state machine, controls, all abilities and weapons,
+damage/death/revival and interactions; record sources, derived requirements and
+explained exclusions. The AI writes the manifest, without asking the user to
+enumerate every action. Give different spells independent action IDs and reviews.
+Register all applicable states; a fixed five-action set cannot replace discovery.
+
 ```sh
 python scripts/video_sample.py --video character-walk.mp4 --ffmpeg /path/to/ffmpeg \
   --out NEW_OUTPUT --character "Character" --action walk --start 1.0 \
@@ -60,3 +67,32 @@ Then explicitly use `--key-scope all` to remove those enclosed key pixels with
 the same fixed threshold. This must not silently erase matching clothes or eyes;
 default `edge-connected` preserves isolated internal colors. The review records
 the chosen scope and includes a local copy of the unmodified source video.
+
+## Include video actions in a complete character
+
+Create the coverage batch first. Add `--batch BATCH --batch-character CHARACTER_ID`
+to the extraction command to bind its action to the exact scope requirement and
+approved character image. The importer copies and hashes that reference and the
+original source video. An optional `--character-image IMAGE` must match the
+batch's approved image when bound; standalone samples may also keep a reference.
+
+```sh
+python scripts/batch.py attach-video --batch BATCH --character CHARACTER_ID \
+  --action ACTION_ID --sample NEW_OUTPUT
+python scripts/batch.py status --batch BATCH
+python scripts/batch.py review --batch BATCH --character CHARACTER_ID \
+  --action ACTION_ID --report ACTUAL_REVIEW.json
+python scripts/batch.py finish --batch BATCH
+```
+
+Copy current `artifact_hashes` and `coverage_binding` from status into the actual
+review report, with the checks described in [batch coverage](batch-coverage.md).
+Inspect both the original video and transparent animation, including identity,
+equipment, the exact skill/state gesture and timing. Technical alpha/canvas checks
+do not prove motion quality. Reusing one source interval or identical exported
+frames under two names cannot fulfill two independent requirements.
+
+Each extracted clip remains an `action_study`; only the batch can establish full
+coverage after every registered action has a current review. Missing a second
+spell or a required base state blocks finish. Old unbound clips require local
+re-extraction with binding before attachment, not another paid video generation.

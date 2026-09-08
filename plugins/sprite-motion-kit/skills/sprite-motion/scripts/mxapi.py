@@ -26,8 +26,14 @@ MODELS = {
     "nano2": {"kind": "image", "submit": "/api/v2/nano2", "poll": "/api/v2/nano/task", "sizes": ["1K", "2K", "4K"], "refs": 8},
     "seedance-2.0": {"kind": "video", "submit": "/api/v2/video/seedance2", "poll": "/api/v2/video/task", "sizes": ["480p", "720p", "1080p"], "refs": 9, "duration": [4, 15]},
     "seedance-2.0-fast": {"kind": "video", "submit": "/api/v2/video/seedance2-fast", "poll": "/api/v2/video/task", "sizes": ["480p", "720p"], "refs": 9, "duration": [4, 15]},
+    # MXAPI /api/docs?id=v2-video-seedance2-mini fixes the upstream model to
+    # doubao-seedance-2-0-mini-260615. Two references is this adapter's supported
+    # subset, not an inferred upstream limit or a copy of Fast's capabilities.
+    "seedance-2.0-mini": {"kind": "video", "submit": "/api/v2/video/seedance2-mini", "poll": "/api/v2/video/task", "sizes": ["480p", "720p"], "refs": 2, "duration": [4, 15], "endpoints": True, "reference_roles": ["first_frame", "reference_image"], "ratios": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"]},
     "seedance-1.0-fast": {"kind": "video", "submit": "/api/v2/video/generate", "poll": "/api/v2/video/task", "sizes": ["480p", "720p", "1080p"], "refs": 1, "duration": [2, 12], "code": "doubao-seedance-1-0-pro-fast-251015"},
-    "seedance-1.0-lite-i2v": {"kind": "video", "submit": "/api/v2/video/generate", "poll": "/api/v2/video/task", "sizes": ["480p", "720p", "1080p"], "refs": 2, "duration": [2, 12], "code": "doubao-seedance-1-0-lite-i2v-250428", "endpoints": True},
+    "seedance-1.0-lite-i2v": {"kind": "video", "submit": "/api/v2/video/generate", "poll": "/api/v2/video/task", "sizes": ["480p", "720p", "1080p"], "refs": 2, "duration": [2, 12], "code": "doubao-seedance-1-0-lite-i2v-250428", "endpoints": True, "i2v_only": True},
+    # Veo's documented API exposes neither resolution nor duration controls.
+    "veo-3.1-fast": {"kind": "video", "submit": "/api/v2/veo/generate", "poll": "/api/v2/veo/task", "sizes": [], "refs": 2, "duration": None, "code": "veo31-fast", "endpoints": True, "ratios": ["16:9", "9:16"], "default_ratio": "16:9"},
 }
 RATIOS = {"1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "21:9"}
 
@@ -57,21 +63,36 @@ def reference_image(source: str):
     raise ProviderError("Reference requires a provider-reachable HTTPS image URL; use the image job result URL or explicitly publish the local image with your existing media service")
 
 
-def build_payload(model, prompt, references=(), *, resolution=None, ratio="1:1", duration=None, first_last=False):
+def build_payload(model, prompt, references=(), *, resolution=None, ratio=None, duration=None, first_last=False, reference_role=None):
     if model not in MODELS:
         raise ProviderError("Unknown model; run models to see supported adapters")
     spec = MODELS[model]
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 10000:
         raise ProviderError("Prompt must contain 1–10000 characters")
-    if ratio not in RATIOS:
+    ratio = spec.get("default_ratio", "1:1") if ratio is None else ratio
+    if ratio not in spec.get("ratios", RATIOS):
         raise ProviderError("Unsupported aspect ratio")
+    if reference_role is not None:
+        if reference_role not in spec.get("reference_roles", []):
+            raise ProviderError("This model adapter does not support the selected reference role")
+        if first_last or not references or (reference_role == "first_frame" and len(references) != 1):
+            raise ProviderError("Reference role requires matching images and cannot be combined with first/last mode")
+    if model == "seedance-2.0-mini" and re.search(r"(?:^|\s)--(?:dur|rs|ratio)(?:\s|=|$)", prompt):
+        raise ProviderError("Mini uses top-level duration, resolution and ratio; legacy inline parameters are unsupported")
     if len(references) > spec["refs"]:
         raise ProviderError("Too many reference images; none may be silently dropped")
+    if first_last and (not spec.get("endpoints") or len(references) != 2):
+        raise ProviderError("First/last-frame mode requires a documented endpoint adapter and exactly two images")
+    if model == "veo-3.1-fast":
+        if resolution is not None or duration is not None:
+            raise ProviderError("Veo does not document resolution or duration controls; omit both options")
+        if len(references) == 2 and not first_last:
+            raise ProviderError("Two Veo images require explicit first/last-frame mode")
+        return {"model": spec["code"], "prompt": prompt.strip(), "aspectRatio": ratio,
+                "images": list(references), "enableExtendImg": False, "enableTranslation": False}
     resolution = resolution or spec["sizes"][0]
     if resolution not in spec["sizes"]:
         raise ProviderError("Unsupported model resolution")
-    if first_last and (not spec.get("endpoints") or len(references) != 2):
-        raise ProviderError("Verified first/last-frame adapter requires Lite I2V and exactly two images")
     if spec["kind"] == "image":
         if first_last:
             raise ProviderError("Image jobs do not have video endpoints")
@@ -90,20 +111,22 @@ def build_payload(model, prompt, references=(), *, resolution=None, ratio="1:1",
         raise ProviderError("Duration is outside this model's supported range")
     if ratio in {"3:2", "2:3"} or (model.startswith("seedance-1") and ratio == "21:9"):
         raise ProviderError("Unsupported video aspect ratio")
-    if spec.get("endpoints") and not references:
+    if spec.get("i2v_only") and not references:
         raise ProviderError("I2V requires a character image")
-    if spec.get("endpoints") and len(references) == 2 and not first_last:
-        raise ProviderError("Two Lite I2V images require explicit first/last-frame mode")
+    if spec.get("endpoints") and len(references) == 2 and not first_last and reference_role != "reference_image":
+        raise ProviderError("Two endpoint images require explicit first/last mode or a supported reference_image role")
     content = []
     text = prompt.strip()
     if model.startswith("seedance-1"):
         text += f" --ratio {'adaptive' if references else ratio} --rs {resolution} --dur {duration}"
     content.append({"type": "text", "text": text})
     for index, ref in enumerate(references):
-        role = ("first_frame" if index == 0 else "last_frame") if first_last else ("first_frame" if model.startswith("seedance-1") else "reference_image")
+        role = ("first_frame" if index == 0 else "last_frame") if first_last else (reference_role or ("first_frame" if model.startswith("seedance-1") or model == "seedance-2.0-mini" else "reference_image"))
         content.append({"type": "image_url", "image_url": {"url": ref}, "role": role})
     if model.startswith("seedance-1"):
         return {"model": spec["code"], "content": content}
+    if model == "seedance-2.0-mini":
+        return {"content": content, "ratio": ratio, "resolution": resolution, "duration": duration, "generate_audio": False}
     return {"content": content, "ratio": ratio, "resolution": resolution, "duration": duration, "generate_audio": False, "watermark": False, "tools": []}
 
 
@@ -395,9 +418,11 @@ def main():
     prep.add_argument("--prompt-file", type=Path, required=True)
     prep.add_argument("--reference", action="append", default=[])
     prep.add_argument("--resolution")
-    prep.add_argument("--ratio", default="1:1")
+    prep.add_argument("--ratio", help="Default: 16:9 for Veo, 1:1 for other profiles")
     prep.add_argument("--duration", type=int)
     prep.add_argument("--first-last", action="store_true")
+    prep.add_argument("--reference-role", choices=["first_frame", "reference_image"],
+                      help="Mini only: one first frame by default, or explicit reference-image conditioning")
     prep.add_argument("--job", type=Path, required=True)
     for cmd in ("submit", "poll", "download"):
         p = commands.add_parser(cmd)
@@ -410,7 +435,8 @@ def main():
             result = MODELS
         elif args.command == "prepare":
             result = prepare(args.job, args.model, args.prompt_file.read_text(encoding="utf-8-sig"), args.reference,
-                             resolution=args.resolution, ratio=args.ratio, duration=args.duration, first_last=args.first_last)
+                             resolution=args.resolution, ratio=args.ratio, duration=args.duration, first_last=args.first_last,
+                             reference_role=args.reference_role)
         elif args.command == "download":
             result = download(args.job)
         else:

@@ -1,56 +1,119 @@
 # Coverage and completion contract
 
-Extract the user's entire requested character/action scope before preparing individual jobs. Do not convert “fix the death animation” during an existing full-character replacement into a death-only replacement scope. Preserve earlier required actions unless the user changes the scope. This manifest tracks delivery coverage separately from per-action pose design.
+The AI owns discovery, manifest authoring and command execution. The user supplies the project/target characters and desired outcome; do not ask them to handwrite a manifest or enumerate every animation. Inspect the selected project's actual files before planning generation. Preserve existing requested scope when the user asks to fix one action during a full-character task.
 
-The default `scope_mode` is `full_character`. The tool automatically includes walk, run, attack, death and jump for every character, preserving additional requested actions. Extras cannot substitute for those five. Author their motion for the actual body. A diagnostic walk job remains partial within this full scope even after it is visually accepted.
+## Discover the project before generating
 
-Only an explicitly user-requested isolated study may use `scope_mode: action_study` and a nonempty `study_reason`. That scope reports its study status separately and cannot be presented as a complete character. Do not switch an existing full-character request into study mode just because other actions are unfinished. Existing scopes lacking the five-action baseline must be migrated into a new batch; preserve the old one as history.
+For each character, record the sources inspected and the requirements derived from them:
 
-Create a JSON specification (paths relative to this file):
+- State machine and animation transitions, including locomotion and airborne states.
+- Control inputs and controller behavior (walk/run/jump or the body's applicable alternatives).
+- Every distinct ability, spell and cast phase needed by the game.
+- Weapon configurations and their distinct attacks, stances or interactions.
+- Hit reactions, knockdown/fall, fatal transition, persistent death state and revival/recovery paths.
+- Other interactions such as climbing, using objects, dialogue or idles when actually used.
+
+These are discovery areas, not a fixed animation list. An area with no applicable behavior still needs an inspected source/search reference and an explanation. Record non-applicable discovered requirements with an explicit exclusion reason; do not silently omit them. Distinguish a recoverable knockdown from the fatal transition and settled death pose when the game distinguishes them; describe how the relevant states connect. Combine multiple source references for one actual behavior rather than inventing duplicate requirements. Different spells are separate gameplay requirements and must receive independent action IDs and reviews.
+
+The script validates the AI's recorded inventory and its execution coverage. It does not infer every requirement from arbitrary game code or prove that the host inspected all files. Use real file locations, stable state/ability/weapon IDs and concrete observations. Requirements discovered later require a revised explicit batch, preserving the prior scope as history.
+
+## AI-authored schema-2 scope
+
+`full_character` means all applicable requirements found for that character in this project. The tool does not inject walk/run/attack/death/jump or any other universal list. `action_map` must cover every applicable requirement exactly, and every mapped value must be a distinct action ID. Optional `required_actions` must equal the mapped set; omitting it derives the set without dropping requirements.
+
+The following example illustrates the shape; replace every source, ID and finding with the selected project's actual evidence:
 
 ```json
 {
-  "request": "The user's requested set, including retained prior scope",
+  "request": "Complete the selected spellcaster's animations for the inspected game",
+  "scope_mode": "full_character",
   "characters": {
-    "armored_guard": {
-      "character": "guard.png",
-      "required_actions": ["walk", "run", "attack", "death", "jump", "thrust", "overhead_cut"]
+    "spellcaster": {
+      "character": "approved-spellcaster.png",
+      "discovery": {
+        "project": "/actual/selected/project",
+        "inspections": [
+          {"area":"state_machine","status":"inspected","source":"actors/mage/state-machine.ts","notes":"Walk, running, knockdown and dead states require animation."},
+          {"area":"control_inputs","status":"inspected","source":"actors/mage/controller.ts","notes":"Movement and sprint are distinct. This actor cannot jump."},
+          {"area":"abilities","status":"inspected","source":"abilities/mage.json","notes":"Firebolt and frost ward have distinct cast behavior."},
+          {"area":"weapons","status":"not_applicable","source":"actors/mage/loadout.json","notes":"No weapon attack is enabled for this actor."},
+          {"area":"damage_death_revival","status":"inspected","source":"actors/mage/damage.ts","notes":"Knockdown can recover; fatal damage transitions to a persistent dead body."},
+          {"area":"interactions","status":"not_applicable","source":"actors/mage/interactions.ts","notes":"No additional animated interaction is assigned."}
+        ]
+      },
+      "requirements": [
+        {"id":"move","kind":"action","game_id":"state.walk","purpose":"Movement gait","source":"controller.ts:move and state-machine.ts:walk","applicable":true},
+        {"id":"sprint","kind":"action","game_id":"state.run","purpose":"Separate sprint gait","source":"controller.ts:sprint","applicable":true},
+        {"id":"knocked_down","kind":"action","game_id":"state.knocked_down","purpose":"Recoverable fall and recovery transition","source":"damage.ts:knockdown","applicable":true},
+        {"id":"dead","kind":"action","game_id":"state.dead","purpose":"Fatal transition ending in a persistent full-size body","source":"damage.ts:die","applicable":true},
+        {"id":"firebolt","kind":"ability","game_id":"ability.firebolt","purpose":"Forward firebolt cast with its release and recovery","source":"abilities/mage.json:firebolt","applicable":true},
+        {"id":"frost_ward","kind":"ability","game_id":"ability.frost_ward","purpose":"Distinct defensive ward casting gesture","source":"abilities/mage.json:frost_ward","applicable":true},
+        {"id":"jump","kind":"action","game_id":"input.jump","purpose":"Potential airborne action checked during discovery","source":"controller.ts:canJump=false","applicable":false,"exclusion_reason":"This selected character cannot jump in the game."}
+      ],
+      "action_map": {
+        "move":"walk", "sprint":"run", "knocked_down":"knockdown_recover",
+        "dead":"fatal_fall", "firebolt":"cast_firebolt", "frost_ward":"cast_frost_ward"
+      }
     }
   }
 }
 ```
 
-These names are illustrative. Do not force this list on a single-jump request, a creature without legs, or a user requesting multiple spell variants. Include all requested characters; share a single appearance entry only when they genuinely use the same appearance and approved motion design. Record that grouping in the specification. Existing approved clips may be reused when appropriate, but must be attached and reviewed; existence alone is not completion.
+An isolated user-requested test may use `scope_mode: action_study` and a nonempty `study_reason`. It still records the inspected context and applicable requirements of that study. Do not switch a full-character request to study mode because work is unfinished. A study can finish its own scope but never reports `complete: true` or `full_character_complete: true`.
 
 ```sh
-python scripts/batch.py create --spec SCOPE.json --out BATCH
-python scripts/batch.py attach --batch BATCH --character armored_guard --job JOB
+python scripts/batch.py create --spec AI_AUTHORED_SCOPE.json --out BATCH
 python scripts/batch.py status --batch BATCH
 ```
 
-A job may contain a subset of required actions. Jobs can be combined; attaching one never removes other required actions. The source character hash must match. Prepare/render/review/generate/pack each action through the usual custom motion workflow. The batch records pending actions before those jobs exist, so a missing run cannot disappear merely because a death-only plan has no run key.
+Existing schema-1 batches are historical coverage records without this discovery inventory. They cannot pass the new full-character finish gate. Create a reviewed schema-2 scope rather than silently inventing missing mappings or rewriting its hash.
 
-After actually inspecting exported animation at normal speed, slow speed and the loop seam/end pose, copy the action's `artifact_hashes` from `status` into a review report:
+## Bind the selected generation route
+
+For the video route, create the batch before extracting each generated action. Binding automatically supplies the approved character reference and records the exact scope, character, action and gameplay requirement in the sample. The importer does not generate video or certify that a provider used the reference; actual visual review must confirm identity and action semantics.
+
+```sh
+python scripts/video_sample.py --video CAST_FIRE.mp4 --ffmpeg /path/to/ffmpeg \
+  --out NEW_FIRE_SAMPLE --character "Spellcaster" --action cast_firebolt \
+  --batch BATCH --batch-character spellcaster \
+  --start 0.5 --duration 1.0 --count 12 --background green --key-scope all \
+  --origin 480 830 --review-notes "Actual inspected casting interval, release timing, equipment and remaining defects."
+python scripts/batch.py attach-video --batch BATCH --character spellcaster \
+  --action cast_firebolt --sample NEW_FIRE_SAMPLE
+```
+
+Timing, origin and key scope above are examples requiring inspection. Keep full shared canvases, actual source order and the source video. Use `--loop` only for an inspected full cycle; a cast commonly ends after its release/recovery. Default key scope protects internal key colors; `all` requires checking that those colors are not part of the character.
+
+Repeat for every missing requirement, including the second spell. One clip remains `scope_mode: action_study` even when bound to a larger batch. An unbound old sample has no frozen gameplay/character identity and cannot simply be marked accepted: bind by re-extracting the inspected source into a new sample. This is local extraction, not permission for another paid generation.
+
+Custom 3D jobs continue using `batch.py attach --batch BATCH --character ID --job JOB`. Their existing pose/reference/preflight checks remain required. Both routes share the same inventory and visual-review finish gate. Separate actions cannot use the same source-video interval or identical exported pixel sequence under renamed IDs; different intervals of a long video are allowed when actually distinct. Re-encoded or perceptually similar motions still require human/AI visual judgment.
+
+## Review each current export, then finish
+
+After inspecting the actual source and exported frames at normal speed, slow speed and the loop seam/end pose, copy `artifact_hashes` and `coverage_binding` from that action's `status` entry into a report. All checks must be true only after the observation actually passes. Video reviews additionally require `source_video` and `ability_or_weapon_match`:
 
 ```json
 {
   "artifact_hashes": {"copy exact current entries from status": "..."},
+  "coverage_binding": {"copy the complete current status binding": "..."},
   "checks": {
     "appearance": true,
     "whole_body_motion": true,
     "timing_and_transition": true,
     "transparency_and_crop": true,
-    "requested_action": true
+    "requested_action": true,
+    "source_video": true,
+    "ability_or_weapon_match": true
   },
-  "notes": "Concrete observations from playback and frames; unresolved faults are not a pass."
+  "notes": "Concrete observations of this exact ability/weapon/state, its release/contact timing, body motion, source defects and exported edges. Unresolved faults are not a pass."
 }
 ```
 
 ```sh
-python scripts/batch.py review --batch BATCH --character armored_guard --action thrust --report REVIEW.json
+python scripts/batch.py review --batch BATCH --character spellcaster --action cast_firebolt --report REVIEW.json
 python scripts/batch.py finish --batch BATCH
 ```
 
-`finish` fails until every required pair has current exported files and an actual visual review recorded. Replacing an atlas, frame, generated source or reference invalidates the applicable review. A missing export or changed plan blocks completion. `completion.json` is a historical snapshot: always rerun `status`/`finish` immediately before delivery; do not use an old snapshot after changing artifacts. Requirements are hashed so accidental edits cannot silently reduce the scope. An intentional user scope change needs an explicitly revised batch; retain the old batch for traceability.
+`finish` fails while any applicable discovered requirement has no valid current export or review. Missing the second spell or an applicable base state cannot be hidden by finishing the first. `status` rechecks stored review flags, notes, bindings and artifact hashes; source, frame, atlas, appearance or manifest changes invalidate review. Video evidence checks actual PNG/alpha/shared canvas and matching atlas pixels; it does not recertify animation naturalness.
 
-Limits: the script checks coverage, file identity and recorded prerequisites. It cannot verify what the user said, certify aesthetic quality, prove that an AI watched the animation, or prevent outside scripts from bypassing the workflow. The host AI must accurately populate the requirement list, inspect outputs, and report incomplete work truthfully. Never claim these checks alone make movement natural.
+`scope_complete` means this declared scope has current reviews. `complete` and `full_character_complete` are true only for a schema-2 full-character scope. `study_complete` may be true while both full-character flags remain false. `completion_current` indicates that the completion snapshot still matches current reviews and artifacts; always rerun status/finish before delivery. Technical completion is never permission to overwrite game assets or substitute for user approval explicitly requested in the conversation.

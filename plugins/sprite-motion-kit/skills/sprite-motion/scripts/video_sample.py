@@ -126,7 +126,8 @@ def _remove_background(image, mode, key_scope='edge-connected'):
 
 
 def export_video(video, ffmpeg, out, *, character, action, start, duration, count,
-                 loop, background, origin, review_notes, key_scope='edge-connected'):
+                 loop, background, origin, review_notes, key_scope='edge-connected',
+                 character_image=None, batch=None, batch_character=None):
     video, ffmpeg, out = Path(video).resolve(), Path(ffmpeg).resolve(), Path(out).resolve()
     if not video.is_file() or not ffmpeg.is_file():
         raise ValueError('Provide an existing video and FFmpeg executable')
@@ -146,6 +147,27 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         raise ValueError('Key scope only applies to a keyed background')
     if len(origin) != 2 or any(type(v) is not int or v < 0 for v in origin):
         raise ValueError('Origin must contain two nonnegative input-canvas coordinates')
+    coverage_binding = None
+    if bool(batch) != bool(batch_character):
+        raise ValueError('Provide both batch and batch-character to bind a gameplay requirement')
+    if batch:
+        import batch as coverage_module
+        coverage_binding = coverage_module.binding(batch, batch_character, action)
+        entry = coverage_module.load(batch)[2]['characters'][batch_character]
+        character_image = Path(character_image or entry['character']).resolve()
+        if coverage_module.digest(character_image) != entry['character_sha256']:
+            raise ValueError('Character reference differs from the coverage batch')
+    if character_image:
+        character_image = Path(character_image).resolve()
+        if not character_image.is_file():
+            raise ValueError('Provide an existing character reference image')
+        try:
+            with Image.open(character_image) as appearance:
+                if getattr(appearance, 'n_frames', 1) != 1:
+                    raise ValueError('Character reference must be one still image')
+                appearance.verify()
+        except OSError as exc:
+            raise ValueError('Character reference is not a readable image') from exc
     selected, sampling_times = _select_source_frames(video, ffmpeg, start, duration, count)
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.video-sample-', dir=out.parent) as temporary:
@@ -198,6 +220,12 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
             extension = '.video'
         source_copy = 'source-video' + extension
         shutil.copyfile(video, staging / source_copy)
+        character_copy, character_hash = None, None
+        if character_image:
+            extension = character_image.suffix.lower()
+            character_copy = 'character-reference' + (extension if re.fullmatch(r'\.[a-z0-9]{1,8}', extension) else '.image')
+            shutil.copyfile(character_image, staging / character_copy)
+            character_hash = hashlib.sha256((staging / character_copy).read_bytes()).hexdigest()
         clip = {'name': action, 'count': count, 'seconds': duration, 'loop': loop,
                 'tile': [width, height], 'origin': list(origin),
                 'frames': [f'{action}/frame-{i:03}.png' for i in range(count)],
@@ -206,6 +234,9 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
                 'source_times_seconds': [float(frame['time']) for frame in selected],
                 'bounds': bounds, 'accepted_by_user': False}
         report = {'character': character, 'status': 'video_review_sample', 'clips': [clip],
+                  'scope_mode': 'action_study', 'full_character_complete': False,
+                  'coverage_binding': coverage_binding, 'character_reference': character_copy,
+                  'character_sha256': character_hash,
                   'source_video_sha256': hashlib.sha256(video.read_bytes()).hexdigest(),
                   'source_video_name': video.name, 'source_video': source_copy,
                   'interval': [start, start + duration],
@@ -232,7 +263,8 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         template = template.replace('  <footer>', '  ' + comparison + '\n  <footer>')
         (staging / 'index.html').write_text(template, encoding='utf-8')
         staging.rename(out)
-    return {'preview': str(out / 'index.html'), 'status': 'video_review_sample', 'count': count}
+    return {'preview': str(out / 'index.html'), 'status': 'video_review_sample', 'count': count,
+            'scope_mode': 'action_study', 'full_character_complete': False}
 
 
 if __name__ == '__main__':
@@ -247,4 +279,7 @@ if __name__ == '__main__':
     parser.add_argument('--key-scope', choices=['edge-connected', 'all'], default='edge-connected',
                         help='Use all only after checking that the character has no key color; also removes enclosed background gaps')
     parser.add_argument('--origin', type=int, nargs=2, required=True)
+    parser.add_argument('--character-image', help='Approved source appearance; bound batches supply this automatically')
+    parser.add_argument('--batch', help='Existing project-discovery coverage batch')
+    parser.add_argument('--batch-character', help='Character ID in that batch; action comes from --action')
     print(json.dumps(export_video(**vars(parser.parse_args())), ensure_ascii=False))

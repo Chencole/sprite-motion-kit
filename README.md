@@ -7,7 +7,7 @@ being distributed as a finished animation solution.
 ## Existing image/video account connection
 
 The plugin can now use an existing **MXAPI/MyPixelFlow** account to submit image
-jobs and **Seedance** video jobs, query progress and download the actual results.
+jobs and **Seedance / Veo** video jobs, query progress and download the actual results.
 It can reuse MyPixelFlow's encrypted local account without copying secrets or
 modifying that project. Other installations provide their own account. See the
 [connection workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/mxapi-generation.md).
@@ -16,9 +16,35 @@ The selected video route is **character still → continuous action video → lo
 transparent frames → playback review**. It uses existing FFmpeg for timestamp-based
 frame extraction, preserves one canvas and jump height, and supports green/magenta
 key backgrounds. Local source files need the user's own reachable media publisher;
-the image generator's returned HTTPS output can go directly into Seedance.
+the image generator's returned HTTPS output can go directly into the selected video adapter.
 No quota, credentials or models are included. Successful connection/extraction tests
 are not a promise of stable character motion; one real sample still needs review.
+
+**The AI derives the animation set from the project; the user does not fill in an
+action checklist.** Before generating a complete character, inspect its state
+machine, movement/controls, weapons, abilities, damage reactions, falls/death and
+other relevant gameplay transitions. Record the inspected sources and map every
+applicable requirement to an action ID. Two different spells need their respective
+casting actions; a generic `attack` does not replace them. Include idle, movement,
+running, jumping, landing, reactions and other states where the project uses them,
+and explain exclusions from source evidence. A fixed five-action list is not a
+substitute for this analysis. The [coverage contract](plugins/sprite-motion-kit/skills/sprite-motion/references/batch-coverage.md)
+tracks the AI-authored plan and exact reviewed outputs, including video-derived
+actions. A walk-only model comparison remains an action study, not a finished
+character or authorization to replace the roster.
+
+Seedance **2.0 Mini** is a separate adapter, with a documented dedicated route and
+defaults of 480p / 4 seconds. Model selection and resolution selection are distinct;
+raising resolution does not upgrade the model. The provider's public Mini pricing
+sources currently differ, so estimates are not promised bills. Preserve the task's
+returned point cost, and never submit extra paid samples merely to discover pricing.
+
+Veo **3.1 Fast** uses its own provider request and polling routes. Its adapter
+accepts the documented landscape/portrait formats and keeps paid image expansion
+off. The gateway does not expose duration or resolution controls for this route;
+unsupported overrides fail before submission rather than pretending to change
+the requested model tier. Read the current provider quote before each authorized
+trial and report the actual returned video length and charge separately.
 
 The reusable [whole-sheet sample workflow](plugins/sprite-motion-kit/skills/sprite-motion/references/whole-sheet-samples.md)
 now packages the direct host-image approach: a complete generated character sheet,
@@ -27,7 +53,10 @@ The host still needs its own image-generation access. The second skeleton sample
 is included under `examples/skeleton-sheet-sample`; its walk revision was blocked
 by a service usage limit, so its original walk remains a review draft.
 
-**用户需求 → AI 设计三维体型与动作 → 木头人参考 → AI 角色帧 → 图集与可视化检查。**
+**按项目自动整理角色动作 → 用户选定的生成方式 → 透明动画与完整性验收。**
+
+The following 3D-reference workflow is an alternative when selected. It is not a
+prerequisite for the image-to-video route above.
 
 A Codex plugin for custom game-character animation authoring. The AI designs the anatomy and key poses for the requested action; local tools render an orthographic 3D mannequin guide, package character sprites, and open a synchronized offline reviewer.
 
@@ -56,14 +85,14 @@ No Blender, external website, account or model credits are required for the loca
 
 The agent:
 
-1. Records the complete requested character/action coverage, then interprets body, view and timing.
+1. Reads the project's actual character states, controls and abilities, records their complete action coverage, then interprets body, view and timing. The agent writes this manifest rather than asking the user to enumerate routine actions.
 2. Authors a JSON rig and whole-body key poses, including attached weapon endpoints and extra limbs as needed.
 3. Validates and renders that custom motion locally; inspects and corrects its poses.
 4. Reviews the reference and checks the available image tool's declared canvas controls before unlocking requests, then supplies the complete pose guide, original character and endpoint reference together.
 5. Checks the generated grid, transparency and continuity, exports frames/atlases, and opens the reference/character reviewer.
 6. Checks the whole batch against that coverage. Missing run/attack/etc. remains incomplete even if a death clip is finished. Current exported-art reviews are required before `batch.py finish` succeeds.
 
-See the [batch coverage contract](plugins/sprite-motion-kit/skills/sprite-motion/references/batch-coverage.md) for the required manifest and completion commands. Action IDs are user-defined. Scope is recorded before individual jobs so a partial repair cannot silently replace a full animation-set request.
+See the [batch coverage contract](plugins/sprite-motion-kit/skills/sprite-motion/references/batch-coverage.md) for the required manifest and completion commands. The AI derives action IDs from the user's project. Scope is recorded before individual jobs so a partial repair cannot silently replace a full animation-set request.
 
 ### Pose correspondence and rejected drafts
 
@@ -143,6 +172,6 @@ Code, procedural renderer and workflow: **MIT** (modify, redistribute, commercia
 
 This repository contains no private game code, saves, credentials or model weights. The explicit review examples contain generated sample artwork. See [privacy](docs/PRIVACY.md), [terms](docs/TERMS.md) and [official directory status](docs/OFFICIAL-SUBMISSION.md). GitHub distribution is independent of OpenAI's public directory; no official listing is claimed.
 
-## 生成前置检查
+## 三维参考路线的生成前置检查
 
 默认入口必须提供角色分析、动作构思和自定义三维方案。工具先生成参考，AI 实际检查并提交记录，再通过真实生成工具的尺寸能力声明检查后才解锁生成请求；自定义方案与导入参考使用相同门槛。仅支持提示词的工具只能在用户明确要求的诊断预览中使用，诊断不能转为正式素材。替换角色图、方案或参考图会使检查失效。旧模板只可通过 `--legacy-reference-reason` 显式复用，不再作为缺省流程。检查记录不等于美术质量认证。详见插件内 motion-contract。
