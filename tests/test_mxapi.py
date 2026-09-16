@@ -28,6 +28,111 @@ class FakeClient:
 
 
 class MxapiTest(unittest.TestCase):
+    def test_fast_fixed_route_first_frame_payload_submit_then_poll(self):
+        ref = 'https://example.com/character.png'
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / 'fast'
+            mxapi.prepare(job, 'seedance-2.0-fast', ' Walk in place. ', [ref])
+            packet, _ = mxapi.read_job(job)
+            body = packet['body']
+            self.assertEqual(body, {
+                'content': [{'type': 'text', 'text': 'Walk in place.'},
+                            {'type': 'image_url', 'image_url': {'url': ref}, 'role': 'first_frame'}],
+                'resolution': '480p', 'ratio': '1:1', 'duration': 4, 'generate_audio': False,
+            })
+            self.assertEqual(packet['model'], 'seedance-2.0-fast')
+            client = FakeClient()
+            mxapi.submit(job, client)
+            self.assertEqual(client.calls, [('/api/v2/video/seedance2-fast', {'body': body})])
+            polling = FakeClient({'data': {'status': 'succeeded', 'video_url': 'https://example.com/fast.mp4'}})
+            self.assertEqual(mxapi.poll(job, polling)['state'], 'succeeded')
+            self.assertEqual(polling.calls, [('/api/v2/video/task', {'query': {'task_id': 'task-one'}})])
+            with self.assertRaises(mxapi.ProviderError):
+                mxapi.submit(job, client)
+            self.assertEqual(len(client.calls), 1)
+
+    def test_fast_reference_mode_is_explicit_and_preserves_every_image(self):
+        refs = [f'https://example.com/reference-{index}.png' for index in range(9)]
+        first = mxapi.build_payload('seedance-2.0-fast', 'Walk.', refs[:1], reference_role='first_frame')
+        self.assertEqual(first['content'][1]['role'], 'first_frame')
+        for count in (1, 2, 9):
+            with self.subTest(count=count):
+                body = mxapi.build_payload('seedance-2.0-fast', 'Walk.', refs[:count], reference_role='reference_image')
+                self.assertEqual([image['role'] for image in body['content'][1:]], ['reference_image'] * count)
+                self.assertEqual([image['image_url']['url'] for image in body['content'][1:]], refs[:count])
+        self.assertEqual(mxapi.build_payload('seedance-2.0-fast', 'Walk.')['content'], [{'type': 'text', 'text': 'Walk.'}])
+
+    def test_fast_supported_controls_remain_top_level(self):
+        for resolution in ('480p', '720p'):
+            for duration in (4, 15):
+                with self.subTest(resolution=resolution, duration=duration):
+                    body = mxapi.build_payload('seedance-2.0-fast', 'Walk.', resolution=resolution,
+                                               duration=duration, ratio='16:9')
+                    self.assertEqual((body['resolution'], body['duration'], body['ratio']), (resolution, duration, '16:9'))
+                    self.assertEqual(body['content'][0]['text'], 'Walk.')
+                    self.assertFalse(body['generate_audio'])
+                    self.assertNotIn('model', body)
+
+    def test_fast_invalid_controls_roles_and_inline_flags_stop_before_preparation(self):
+        refs = ['https://example.com/character.png']
+        cases = [(refs, 'Walk.', {'resolution': value}) for value in ('1080p', '4K')]
+        cases += [(refs, 'Walk.', {'duration': value}) for value in (0, 3, 16, 4.5, True)]
+        cases += [(refs, 'Walk.', {'ratio': value}) for value in ('3:2', '2:3', 'bad')]
+        cases += [(refs, text, {}) for text in ('Walk. --dur 4', '--rs 480p walk', 'Walk. --ratio=16:9',
+                                               'Walk.\n--dur=4', 'Walk.\t--rs=720p', 'Walk. --ratio')]
+        cases += [(refs * 2, 'Walk.', {}), (refs * 2, 'Walk.', {'reference_role': 'first_frame'}),
+                  (refs * 2, 'Walk.', {'first_last': True}),
+                  (refs, 'Walk.', {'first_last': True, 'reference_role': 'reference_image'}),
+                  (refs, 'Walk.', {'reference_role': 'last_frame'}),
+                  ([], 'Walk.', {'reference_role': 'first_frame'}),
+                  ([], 'Walk.', {'reference_role': 'reference_image'}),
+                  (refs * 10, 'Walk.', {'reference_role': 'reference_image'}),
+                  (['local-character.png'], 'Walk.', {})]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(mxapi, 'Client') as client:
+            for index, (references, prompt, options) in enumerate(cases):
+                with self.subTest(index=index):
+                    job = Path(tmp) / str(index)
+                    with self.assertRaises(mxapi.ProviderError):
+                        mxapi.prepare(job, 'seedance-2.0-fast', prompt, references, **options)
+                    self.assertFalse(job.exists())
+            client.assert_not_called()
+
+    def test_fast_cli_preparation_needs_no_credentials_or_network(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = Path(tmp) / 'prompt.txt'
+            prompt.write_text('Walk in place.', encoding='utf-8')
+            for role in (None, 'first_frame', 'reference_image'):
+                job = Path(tmp) / str(role)
+                argv = ['mxapi.py', 'prepare', '--model', 'seedance-2.0-fast', '--prompt-file', str(prompt),
+                        '--reference', 'https://example.com/character.png', '--resolution', '720p',
+                        '--ratio', '16:9', '--duration', '4', '--job', str(job)]
+                if role is not None:
+                    argv += ['--reference-role', role]
+                with patch.object(sys, 'argv', argv), patch.object(mxapi, 'Client') as client, \
+                        patch.object(mxapi, 'load_mxapi_credentials') as credentials, contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(mxapi.main(), 0)
+                    client.assert_not_called()
+                    credentials.assert_not_called()
+                packet, state = mxapi.read_job(job)
+                body = packet['body']
+                self.assertEqual(body['content'][1]['role'], role or 'first_frame')
+                self.assertEqual((body['resolution'], body['ratio'], body['duration']), ('720p', '16:9', 4))
+                self.assertEqual(state['state'], 'prepared')
+
+    def test_fast_unknown_submission_remains_locked_without_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = Path(tmp) / 'fast-unknown'
+            mxapi.prepare(job, 'seedance-2.0-fast', 'Walk.', ['https://example.com/character.png'])
+            client = FakeClient(failure=True)
+            with self.assertRaises(mxapi.ProviderError):
+                mxapi.submit(job, client)
+            self.assertEqual(mxapi.read_job(job)[1]['state'], 'submission_unknown')
+            with self.assertRaises(mxapi.ProviderError):
+                mxapi.submit(job, client)
+            self.assertEqual(len(client.calls), 1)
+
     def test_mini_fixed_route_and_smallest_defaults_submit_then_poll(self):
         with tempfile.TemporaryDirectory() as tmp:
             job = Path(tmp) / 'mini'
@@ -88,9 +193,9 @@ class MxapiTest(unittest.TestCase):
         for references, options in cases:
             with self.subTest(options=options, count=len(references)), self.assertRaises(mxapi.ProviderError):
                 mxapi.build_payload('seedance-2.0-mini', 'Walk.', references, **options)
-        # A Mini-only mode must not change old model semantics or route selection.
+        # Explicit roles must not change the untouched standard adapter.
         with self.assertRaises(mxapi.ProviderError):
-            mxapi.build_payload('seedance-2.0-fast', 'Walk.', refs[:1], reference_role='first_frame')
+            mxapi.build_payload('seedance-2.0', 'Walk.', refs[:1], reference_role='first_frame')
 
     def test_mini_cli_preparation_preserves_model_and_role_selection(self):
         import contextlib

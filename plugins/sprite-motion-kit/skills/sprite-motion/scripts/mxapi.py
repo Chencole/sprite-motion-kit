@@ -27,7 +27,9 @@ MODELS = {
     "seedream-5.0": {"kind": "image", "submit": "/api/v2/draw-5-0", "poll": "/api/v2/draw/task", "sizes": ["2K", "3K"], "refs": 8, "code": "doubao-seedream-5-0-260128"},
     "nano2": {"kind": "image", "submit": "/api/v2/nano2", "poll": "/api/v2/nano/task", "sizes": ["1K", "2K", "4K"], "refs": 8},
     "seedance-2.0": {"kind": "video", "submit": "/api/v2/video/seedance2", "poll": "/api/v2/video/task", "sizes": ["480p", "720p", "1080p"], "refs": 9, "duration": [4, 15]},
-    "seedance-2.0-fast": {"kind": "video", "submit": "/api/v2/video/seedance2-fast", "poll": "/api/v2/video/task", "sizes": ["480p", "720p"], "refs": 9, "duration": [4, 15]},
+    # This fixed route selects doubao-seedance-2-0-fast-260128; omit model.
+    # A single image anchors the first frame unless reference mode is explicit.
+    "seedance-2.0-fast": {"kind": "video", "submit": "/api/v2/video/seedance2-fast", "poll": "/api/v2/video/task", "sizes": ["480p", "720p"], "refs": 9, "duration": [4, 15], "reference_roles": ["first_frame", "reference_image"]},
     # MXAPI /api/docs?id=v2-video-seedance2-mini fixes the upstream model to
     # doubao-seedance-2-0-mini-260615. Two references is this adapter's supported
     # subset, not an inferred upstream limit or a copy of Fast's capabilities.
@@ -79,10 +81,12 @@ def build_payload(model, prompt, references=(), *, resolution=None, ratio=None, 
             raise ProviderError("This model adapter does not support the selected reference role")
         if first_last or not references or (reference_role == "first_frame" and len(references) != 1):
             raise ProviderError("Reference role requires matching images and cannot be combined with first/last mode")
-    if model == "seedance-2.0-mini" and re.search(r"(?:^|\s)--(?:dur|rs|ratio)(?:\s|=|$)", prompt):
-        raise ProviderError("Mini uses top-level duration, resolution and ratio; legacy inline parameters are unsupported")
+    if model in {"seedance-2.0-mini", "seedance-2.0-fast"} and re.search(r"(?:^|\s)--(?:dur|rs|ratio)(?:\s|=|$)", prompt):
+        raise ProviderError("Seedance 2.0 Mini/Fast use top-level duration, resolution and ratio; legacy inline parameters are unsupported")
     if len(references) > spec["refs"]:
         raise ProviderError("Too many reference images; none may be silently dropped")
+    if model == "seedance-2.0-fast" and len(references) > 1 and reference_role != "reference_image":
+        raise ProviderError("Multiple Fast images require explicit reference_image mode; first_frame accepts one image")
     if first_last and (not spec.get("endpoints") or len(references) != 2):
         raise ProviderError("First/last-frame mode requires a documented endpoint adapter and exactly two images")
     if model == "veo-3.1-fast":
@@ -123,11 +127,11 @@ def build_payload(model, prompt, references=(), *, resolution=None, ratio=None, 
         text += f" --ratio {'adaptive' if references else ratio} --rs {resolution} --dur {duration}"
     content.append({"type": "text", "text": text})
     for index, ref in enumerate(references):
-        role = ("first_frame" if index == 0 else "last_frame") if first_last else (reference_role or ("first_frame" if model.startswith("seedance-1") or model == "seedance-2.0-mini" else "reference_image"))
+        role = ("first_frame" if index == 0 else "last_frame") if first_last else (reference_role or ("first_frame" if model.startswith("seedance-1") or model in {"seedance-2.0-mini", "seedance-2.0-fast"} else "reference_image"))
         content.append({"type": "image_url", "image_url": {"url": ref}, "role": role})
     if model.startswith("seedance-1"):
         return {"model": spec["code"], "content": content}
-    if model == "seedance-2.0-mini":
+    if model in {"seedance-2.0-mini", "seedance-2.0-fast"}:
         return {"content": content, "ratio": ratio, "resolution": resolution, "duration": duration, "generate_audio": False}
     return {"content": content, "ratio": ratio, "resolution": resolution, "duration": duration, "generate_audio": False, "watermark": False, "tools": []}
 
@@ -579,7 +583,7 @@ def main():
     prep.add_argument("--duration", type=int)
     prep.add_argument("--first-last", action="store_true")
     prep.add_argument("--reference-role", choices=["first_frame", "reference_image"],
-                      help="Mini only: one first frame by default, or explicit reference-image conditioning")
+                      help="Seedance 2.0 Mini/Fast: one first frame by default, or explicit reference-image conditioning")
     prep.add_argument("--job", type=Path, required=True)
     for cmd in ("submit", "poll", "download"):
         p = commands.add_parser(cmd)

@@ -13,8 +13,10 @@ service to use and continue local extraction work while waiting. Do not purchase
 credits, upload character art to an unrelated provider, or claim generation is
 running without a real call.
 
-Use the approved character appearance as the image-to-video input. Request a
-fixed right-profile camera, full body/weapon in frame, stable scale, simple keyed
+Use the approved character appearance as the image-to-video input. Follow the
+authored view policy: preserve `reference_view` or the explicitly required side
+profile, never relabel a front/three-quarter source as side-on. Request full
+body/weapon in frame, stable scale, a reviewed keyed
 background, no camera movement or motion blur, and several complete consecutive
 steps. Character appearance comes from the input; the motion description should
 focus on the actual action. A video model may still change limbs, equipment or
@@ -27,6 +29,31 @@ and records start-pose/equipment conflicts as risks. A new action-specific still
 and its review are optional when that route is selected. Pass the downloaded Veo job back to the
 extractor with `--generation-job`; this binds the MP4, design, equipment lifecycle
 and coverage requirement through export and batch review.
+
+### Source-reviewed Seedance canvas colors
+
+For `project_bound_seedance_action`, retain the actual Fast request and verified
+upload, `prepare-inputs.json`, `action-design.json` and `padding-provenance.json`.
+Select `background_mode` from an inspection of this original character, not a
+global replacement: `green` is RGBA `[0,255,0,255]`, `magenta` is
+`[255,0,255,255]`, and explicit `blue` is `[0,0,255,255]`.
+The author prompt, provider-bound design, padding transform color and extractor
+`--background` must agree. No automatic choice or altered character pixels.
+
+Green/magenta keep their existing fixed masks. Blue uses a fixed maximum RGB
+channel distance of 40 from `#0000FF`, shared by original-image collision checking
+and video extraction; even nonzero translucent original pixels are checked.
+Inspect the real source and keep a useful color margin for video compression.
+If the chosen key conflicts, reject it rather than disabling the check or
+increasing a threshold. Other arbitrary colors are not supported implicitly.
+
+The validator reopens the real upload receipt and checks scope/design/request
+bindings, distinct original/prepared SHA256 values, and a pixel-for-pixel
+`alpha_composite` reconstruction of the unchanged original on the chosen pure
+canvas. Full-interval transparency, clipping and clearance checks remain active.
+For already frozen/submitted batches, author a separate supplementary scope and
+new verified input/job binding for held items only. Preserve prior paid jobs and
+aggregate unique coverage without resubmitting other items or counting duplicates.
 
 For walk/run, choose one full two-step cycle with the same anatomical support
 foot and compatible velocity at its two boundaries. Do not mistake two similar
@@ -50,7 +77,7 @@ python scripts/video_sample.py --video character-walk.mp4 --ffmpeg /path/to/ffmp
 ```
 
 Coordinates and timing above are examples, not inferred facts about an input.
-Supply the actual video-canvas origin. Source alpha or an opaque green/magenta key is
+Supply the actual video-canvas origin. Source alpha or a reviewed green/magenta/blue key is
 supported; opaque arbitrary scenery requires a separate matte workflow and is
 rejected. The importer does not download FFmpeg or remove arbitrary backgrounds.
 

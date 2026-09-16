@@ -23,9 +23,11 @@ import mxapi
 
 
 ACTION_KINDS = {'loop', 'one_shot'}
-FACINGS = {'right_profile', 'left_profile'}
+FACINGS = {'right_profile', 'left_profile', 'reference_view'}
 ROOT_MOTION = {'in_place', 'travel', 'stationary'}
-BACKGROUND_MODES = {'green', 'magenta'}
+KEY_BACKGROUNDS = {'green': (0, 255, 0, 255), 'magenta': (255, 0, 255, 255), 'blue': (0, 0, 255, 255)}
+BACKGROUND_MODES = set(KEY_BACKGROUNDS)
+BLUE_KEY_TOLERANCE = 40
 EQUIPMENT_KINDS = {'none', 'handheld', 'shield', 'focus', 'natural_weapon'}
 EQUIPMENT_STATES = {'none', 'sheathed', 'ready', 'attack', 'casting', 'natural', 'dropped', 'recovered'}
 LEGAL_TRANSITIONS = {
@@ -123,11 +125,19 @@ def validate_design(design, expected_binding=None):
     if design.get('action_kind') not in ACTION_KINDS:
         raise ValueError('action_kind must be loop or one_shot')
     if design.get('facing') not in FACINGS:
-        raise ValueError('Use a strict left or right side profile')
+        raise ValueError('Use a strict left/right profile or an explicitly authored reference_view')
+    if design['facing'] == 'reference_view':
+        view_policy = design.get('view_policy')
+        if (not isinstance(view_policy, dict)
+                or view_policy.get('mode') != 'preserve_original_reference_view'
+                or view_policy.get('user_required_side_view') is not False):
+            raise ValueError('reference_view requires an explicit policy preserving the original reference viewpoint')
+        if 'video_prompt' in design:
+            _text(design['video_prompt'], 'authored reference-view video prompt')
     if design.get('root_motion') not in ROOT_MOTION:
         raise ValueError('root_motion must be in_place, travel or stationary')
     if design.get('background_mode') not in BACKGROUND_MODES:
-        raise ValueError('background_mode must explicitly select green or magenta keying')
+        raise ValueError('background_mode must explicitly select reviewed green, magenta or blue keying')
     evidence = design.get('design_evidence')
     if not isinstance(evidence, list) or not evidence:
         raise ValueError('Record project evidence for this action and equipment state')
@@ -261,6 +271,11 @@ def _equipment_text(equipment):
 def prompts(design):
     validate_design(design)
     facing = 'screen right' if design['facing'] == 'right_profile' else 'screen left'
+    view_instruction = f'Strict 90-degree side profile facing {facing}; fixed camera, fixed scale, no turn toward camera. '
+    if design['facing'] == 'reference_view':
+        view_instruction = ('Preserve the original viewing angle and orientation of the supplied reference image; '
+                            'do not convert it to a side profile or another viewpoint. '
+                            'Fixed camera, fixed scale, no camera orbit or viewpoint drift. ')
     phases = '\n'.join(
         f"{i + 1}. at {p['at']:.2f} — {p['name']}: body={p['body_motion']}; "
         f"equipment={p['equipment_motion']}; equipment_state={p['equipment_state']}; game_event={p['game_event']}"
@@ -274,11 +289,12 @@ def prompts(design):
     timing = (f"Show at least {design['complete_cycles']} complete cycles. Loop seam: {design['loop_compatibility']['notes']}"
               if design['action_kind'] == 'loop' else
               f"One complete action only. Preserve the final endpoint: {design['recovery_or_hold']}")
-    key_color = 'bright green #00FF00' if design['background_mode'] == 'green' else 'bright magenta #FF00FF'
+    key_color = {'green': 'bright green #00FF00', 'magenta': 'bright magenta #FF00FF',
+                 'blue': 'pure blue #0000FF'}[design['background_mode']]
     common = (
         f"Character identity: {design['visual_identity']}. Identity constraints: {identity}. "
         f"Anatomy and weight: {design['anatomy_and_weight']}. Gameplay use: {design['gameplay_context']}. "
-        f"Strict 90-degree side profile facing {facing}; fixed camera, fixed scale, no turn toward camera. "
+        f"{view_instruction}"
         f"Place the standing character at about {framing['character_height_ratio']:.2f} of frame height, "
         f"with feet near {framing['feet_y_ratio']:.2f} of frame height. Keep the full action within normalized safe "
         f"rectangle left={safe[0]:.2f}, top={safe[1]:.2f}, right={safe[2]:.2f}, bottom={safe[3]:.2f}, "
@@ -303,6 +319,10 @@ def prompts(design):
         video += (' Body motion only. Multiple gameplay skills reuse this single animation. '
                   'The game separately dispatches damage, combo events and every runtime visual effect. '
                   'Do not render projectiles, elemental effects, weapon trails, particles or spell effects into the video.')
+    if design['facing'] == 'reference_view' and 'video_prompt' in design:
+        # This authored text is covered by design_digest and the request hash.
+        # Do not reconstruct or append an incompatible profile template.
+        video = design['video_prompt']
     return {'still_prompt': still, 'video_prompt': video}
 
 
@@ -323,11 +343,18 @@ def _contains_key_color(path, mode):
         rgba = np.asarray(image.convert('RGBA'))
     visible = rgba[:, :, 3] > 128
     rgb = rgba[:, :, :3].astype(np.int16)
-    if mode == 'green':
+    if mode == 'blue':
+        # A separately selected fixed RGB key, not a relaxed green/magenta mask.
+        # Check even translucent source pixels against the exact extraction rule.
+        visible = rgba[:, :, 3] > 0
+        keyed = np.max(np.abs(rgb - np.array([0, 0, 255], dtype=np.int16)), axis=2) <= BLUE_KEY_TOLERANCE
+    elif mode == 'green':
         keyed = (rgb[:, :, 1] >= 150) & (rgb[:, :, 1] - np.maximum(rgb[:, :, 0], rgb[:, :, 2]) >= 80)
-    else:
+    elif mode == 'magenta':
         minimum = np.minimum(rgb[:, :, 0], rgb[:, :, 2])
         keyed = (minimum >= 150) & (minimum - rgb[:, :, 1] >= 80)
+    else:
+        raise ValueError('Unsupported identity key color')
     return bool(np.any(visible & keyed))
 
 

@@ -9,6 +9,7 @@ import json
 import mimetypes
 import os
 import re
+import socket
 import threading
 import time
 from datetime import datetime, timezone
@@ -16,11 +17,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-VIEW_VERSION = '3.4'
+VIEW_VERSION = '5.5'
+CURRENT_ACTIONS = {'body_attack', 'walk', 'death'}
+RETIRED_SCOPES = {'body-motion-v3', 'body-motion-v3-r2', 'body-motion-v4-three-actions', 'body-motion-v4-pilot-six'}
 MEDIA = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.mp4', '.webm'}
 NAMES = {'job.json', 'sample.json', 'batch.json', 'scope.json', 'motion-coverage.json', 'action-design.json', 'comparison.json', 'production-status.json', 'queue.json', 'body-motion-v3-fullqueue.json', 'body-motion-v3-r2-fullqueue.json'}
 SKIP = {'.git', 'node_modules', '__pycache__', '.venv', 'config', 'configs', 'db', 'database', 'secrets'}
-LABELS = ['原画设计', '首帧提交', '首帧审核', 'Veo 生成', '透明抽帧', 'Review', '游戏接入']
+LABELS = ['原画设计', '首帧提交', '首帧审核', '视频生成', '透明抽帧', 'Review', '游戏接入']
 
 
 def safe(value, limit=180):
@@ -68,9 +71,12 @@ def mapping(value):
 
 
 class Evidence:
-    def __init__(self, roots, coverage, media_roots, scope_policy=None):
+    def __init__(self, roots, coverage, media_roots, scope_policy=None, scope_spec=None):
         self.roots, self.coverage = roots, coverage
         self.scope_policy = scope_policy
+        self.scope_spec = scope_spec
+        self.source_name = scope_spec.stem.removesuffix('-spec') if scope_spec else scope_policy
+        self.source_parents = list(dict.fromkeys([p.parent for p in coverage] + [r.parent for r in roots if scope_policy and r.name == scope_policy + '-batch']))
         self.allowed = list(dict.fromkeys(roots + media_roots + [p.parent for p in coverage]))
         self.lock = threading.Lock()
         self.files, self.digests = {}, {}
@@ -128,7 +134,7 @@ class Evidence:
                     warnings.append('扫描达到有界上限；请缩小任务目录。')
                     break
                 for name in files:
-                    if name in NAMES or name.endswith('-still-review.json') or name.endswith('-design.json'):
+                    if name in NAMES or name in {'ledger.json', 'fullqueue.json'} or name.endswith('-fullqueue.json') or name.endswith('-still-review.json') or name.endswith('-design.json'):
                         p = Path(parent) / name
                         if not self.permitted(p.resolve()):
                             continue
@@ -148,10 +154,10 @@ class Evidence:
                     warnings.append('覆盖清单写入中或不可读；未据此声明全覆盖。')
         current_scopes = {}
         current_scope_hashes = set()
-        if self.scope_policy:
-            for parent in {p.parent for p in self.coverage}:
+        if self.scope_policy and (self.scope_spec or self.scope_policy not in RETIRED_SCOPES):
+            for parent in self.source_parents:
                 for candidate in parent.iterdir():
-                    if candidate.name not in {self.scope_policy + '-spec.json', self.scope_policy + '-batch'}:
+                    if candidate.name not in {self.source_name + '-spec.json', self.source_name + '-scope.json', self.source_name + '-batch'}:
                         continue
                     paths = [candidate] if candidate.is_file() else [candidate / 'scope.json', candidate / 'batch.json']
                     for source in paths:
@@ -161,7 +167,7 @@ class Evidence:
                         if definition is None:
                             continue
                         current_scopes[source] = definition
-                        if source.name == 'scope.json':
+                        if source.name in {'scope.json', self.source_name + '-scope.json'}:
                             current_scope_hashes.add(self.digest(source))
                         if isinstance(definition.get('scope_sha256'), str):
                             current_scope_hashes.add(definition['scope_sha256'])
@@ -268,17 +274,23 @@ class Evidence:
             item['notes'].append('生产状态：' + safe(d.get('phase', 'unknown')))
             item['notes'].extend(safe(n, 450) for n in (d.get('notes') or [])[:6])
 
-        queued_jobs = {}
-        for p, d in docs.items():
-            if p.name not in {'queue.json', 'body-motion-v3-fullqueue.json', 'body-motion-v3-r2-fullqueue.json'}:
+        queued_jobs, reuse_samples, provider_bindings, integration_records = {}, {}, set(), {}
+        canonical_jobs, execution = {}, {}
+        for p, d in sorted(docs.items(), key=lambda pair: ({'ledger.json': 1, 'production-status.json': 2}.get(pair[0].name, 0), str(pair[0]))):
+            if p.name not in {'queue.json', 'fullqueue.json', 'ledger.json', 'production-status.json'} and not p.name.endswith('-fullqueue.json'):
                 continue
-            if self.scope_policy and 'batch-01' in p.parts:
+            queue_scope = d.get('scope_sha256')
+            if queue_scope not in current_scope_hashes and p.name in {'ledger.json', 'production-status.json'} and isinstance(d.get('queue'), str):
+                queue_path = Path(d['queue']).resolve()
+                queue_doc = docs.get(queue_path)
+                if queue_doc and self.permitted(queue_path) and d.get('queue_sha256') == self.digest(queue_path):
+                    queue_scope = queue_doc.get('scope_sha256')
+            if queue_scope not in current_scope_hashes:
                 continue
-            if self.scope_policy and p.name.endswith('-fullqueue.json') and p.name != self.scope_policy + '-fullqueue.json':
-                continue
-            if self.scope_policy and p.name.endswith('-fullqueue.json') and d.get('scope_sha256') not in current_scope_hashes:
-                warnings.append('v3 队列与当前 scope 指纹不匹配，等待生产者更新。')
-                continue
+            if p.name in {'ledger.json', 'production-status.json'} and 'halt' in d:
+                halt = d.get('halt')
+                reason = halt.get('reason') if isinstance(halt, dict) else halt
+                execution = {'paused': bool(halt), 'reason': reason if isinstance(reason, str) and re.fullmatch(r'[a-zA-Z0-9_-]{1,120}', reason) else ''}
             entries = d.get('items', d.get('jobs', d.get('tasks', d.get('queue', []))))
             if isinstance(entries, dict):
                 entries = list(entries.values())
@@ -290,15 +302,34 @@ class Evidence:
                 cid, aid = bound(entry)
                 cid = cid or entry.get('character', entry.get('batch_character'))
                 aid = aid or entry.get('action')
+                if (not cid or not aid) and isinstance(entry.get('id'), str) and '/' in entry['id']:
+                    cid, aid = entry['id'].split('/', 1)
                 if not isinstance(cid, str) or not isinstance(aid, str):
                     continue
                 item = row(cid, aid)
                 item['mode'] = 'existing_image'
                 item['queued'] = True
-                item['current_queue'] = p.name == (self.scope_policy or 'body-motion-v3') + '-fullqueue.json'
+                item['current_queue'] = True
                 item['queue_state'] = safe(entry.get('state', 'planned'))
+                item['failure_reason'] = safe(entry.get('blocked_reason') or entry.get('hold_reason') or entry.get('failure_reason') or '', 400)
+                item['blocked'] = entry.get('blocked') is True or any(tag in item['queue_state'].lower() for tag in ('hold', 'blocked', 'keycollision'))
+                if isinstance(entry.get('integration_json'), str) and isinstance(entry.get('integration_sha256'), str):
+                    integration_records[(cid, aid)] = (entry['integration_json'], entry['integration_sha256'])
+                binding = entry.get('provider_coverage_binding')
+                if isinstance(binding, dict) and isinstance(binding.get('scope_sha256'), str):
+                    provider_bindings.add((binding['scope_sha256'], cid, aid))
+                reuse = entry.get('reuse')
+                if isinstance(entry.get('sample_json'), str):
+                    reuse = {**(reuse if isinstance(reuse, dict) else {}),
+                             'sample_json': entry['sample_json'], 'sample_json_sha256': entry.get('sample_sha256'),
+                             'review_json': entry.get('review_json'), 'review_json_sha256': entry.get('review_sha256'),
+                             'reuse_decision_json': entry.get('reuse_decision_json'), 'reuse_decision_sha256': entry.get('reuse_decision_sha256')}
+                if isinstance(reuse, dict) and isinstance(reuse.get('sample_json'), str) and isinstance(reuse.get('sample_json_sha256'), str):
+                    candidate = Path(reuse['sample_json']).resolve()
+                    if self.permitted(candidate) and candidate.suffix == '.json':
+                        reuse_samples[candidate] = (item, reuse)
                 evidence(item, p)
-                for field in ('character_png', 'character_reference', 'existing_image', 'reference_image', 'image', 'source_image'):
+                for field in ('character_png', 'canonical_character_png', 'original_character_png', 'character_reference', 'existing_image', 'reference_image', 'image', 'source_image'):
                     url = self.media(entry.get(field), p, registry)
                     if url:
                         item['media']['art'] = url
@@ -324,6 +355,8 @@ class Evidence:
                             target = candidate.resolve()
                             if self.permitted(target):
                                 queued_jobs[target.parent if target.name == 'job.json' else target] = (cid, aid)
+                                if p.name in {'ledger.json', 'production-status.json'}:
+                                    canonical_jobs[(cid, aid)] = target.parent if target.name == 'job.json' else target
 
         jobs_by_digest = {}
         stills_by_digest = {}
@@ -362,9 +395,13 @@ class Evidence:
             cid, aid = bound(design or workflow or d)
             if not (cid and aid) and p.parent.resolve() in queued_jobs:
                 cid, aid = queued_jobs[p.parent.resolve()]
+            # An archived request copy can retain valid binding and newer ctime.
+            # The execution ledger, not directory age, selects the current job.
+            if (cid, aid) in canonical_jobs and p.parent.resolve() != canonical_jobs[(cid, aid)]:
+                continue
             group = 'production' if cid and aid else 'unbound'
             binding = (design or workflow or d).get('coverage_binding') or {}
-            if self.scope_policy and cid and aid and (cid, aid) != ('human-0', 'walk') and binding.get('scope_sha256') not in current_scope_hashes:
+            if self.scope_policy and cid and aid and binding.get('scope_sha256') not in current_scope_hashes and (binding.get('scope_sha256'), cid, aid) not in provider_bindings and queued_jobs.get(p.parent.resolve()) != (cid, aid):
                 group = 'unbound'
             if not (cid and aid):
                 cid, aid = '未绑定试样', p.parent.name
@@ -481,6 +518,9 @@ class Evidence:
         samples = sorted([(p, d) for p, d in docs.items() if p.name == 'sample.json'], key=lambda pair: ('review-veo-comparison' not in str(pair[0]), len(str(pair[0]))))
         seen = set()
         for p, d in samples:
+            reuse_match = reuse_samples.get(p.resolve())
+            if reuse_match and self.digest(p) != reuse_match[1]['sample_json_sha256']:
+                reuse_match = None
             for clip in d.get('clips', []):
                 if not isinstance(clip, dict):
                     continue
@@ -488,13 +528,17 @@ class Evidence:
                 aid = aid or clip.get('name', 'unknown')
                 source_hash = d.get('source_video_sha256')
                 identity = (source_hash or str(p), aid, tuple(d.get('interval', [])))
+                if reuse_match:
+                    identity += ('current-reuse', reuse_match[0]['character'], reuse_match[0]['action'])
                 if identity in seen:
                     continue
                 seen.add(identity)
-                item = jobs_by_digest.get(source_hash)
+                item = reuse_match[0] if reuse_match else jobs_by_digest.get(source_hash)
+                if reuse_match:
+                    item['current_video_sha256'] = source_hash
                 if item is None and cid:
                     sample_group = 'production'
-                    if self.scope_policy and (cid, aid) != ('human-0', 'walk') and (d.get('coverage_binding') or {}).get('scope_sha256') not in current_scope_hashes:
+                    if self.scope_policy and (d.get('coverage_binding') or {}).get('scope_sha256') not in current_scope_hashes:
                         sample_group = 'unbound'
                     item = row(cid, aid, sample_group)
                 if item is None:
@@ -521,6 +565,11 @@ class Evidence:
                     stage(item, 4, 'done', str(len(frame_urls)) + ' 帧本地序列可看')
                 elif frames:
                     stage(item, 4, 'waiting', '抽帧记录存在 · 本地帧不齐')
+                for candidate in (clip.get('preview_gif'), clip.get('gif'), d.get('preview_gif'), d.get('gif')):
+                    preview = self.media(candidate, p, registry)
+                    if preview:
+                        item['media']['gif'] = preview
+                        break
                 draft = d.get('draft') is True or 'draft' in str(d.get('status', ''))
                 if draft:
                     stage(item, 5, 'failed', '诊断草稿 · 待修复 / 审核')
@@ -529,6 +578,34 @@ class Evidence:
                 else:
                     stage(item, 5, 'waiting', '待视觉审核 / 用户验收')
                 stage(item, 6, 'recorded' if d.get('game_assets_replaced') is True else 'pending', '记录已替换游戏素材' if d.get('game_assets_replaced') is True else '未接入 / 无接入记录')
+                if reuse_match:
+                    item['reuse_sample_verified'] = True
+                    reuse = reuse_match[1]
+                    item['reuse_sample_sha256'] = reuse['sample_json_sha256']
+                    item['reuse_review_sha256'] = reuse.get('review_json_sha256')
+                    stage(item, 5, 'waiting', '当前范围复用待最终审核，不新投')
+                    review_path = Path(reuse['review_json']).resolve() if isinstance(reuse.get('review_json'), str) else None
+                    if review_path and self.permitted(review_path) and review_path.is_file() and self.digest(review_path) == reuse.get('review_json_sha256'):
+                        report = read(review_path) or {}
+                        if report.get('status') == 'approved_for_integration' and report.get('sample_sha256') == reuse['sample_json_sha256']:
+                            stage(item, 5, 'done', '当前复用审核通过 · sample / review 指纹匹配')
+                            evidence(item, review_path)
+                        decision_path = Path(reuse['reuse_decision_json']).resolve() if isinstance(reuse.get('reuse_decision_json'), str) else None
+                        if decision_path and self.permitted(decision_path) and decision_path.is_file() and self.digest(decision_path) == reuse.get('reuse_decision_sha256'):
+                            decision = read(decision_path) or {}
+                            criteria = decision.get('criteria') or {}
+                            decision_sample = Path(decision['sample']).resolve() if isinstance(decision.get('sample'), str) else None
+                            if (decision.get('status') == 'approved_for_reuse'
+                                    and (decision.get('character'), decision.get('action')) == (item['character'], item['action'])
+                                    and decision.get('evidence_review_sha256') == reuse.get('review_json_sha256')
+                                    and report.get('sample_sha256') == reuse['sample_json_sha256']
+                                    and decision_sample == p.resolve()
+                                    and decision.get('count') == len(item['media'].get('frames', []))
+                                    and isinstance(criteria, dict) and criteria and all(v is True for v in criteria.values())):
+                                stage(item, 5, 'done', '技术复用判定通过 · 非逐帧用户批准；游戏接入另列')
+                                item['reuse_approval_kind'] = 'technical'
+                                evidence(item, review_path)
+                                evidence(item, decision_path)
                 item['notes'].extend(safe(n, 500) for n in (d.get('notes') or [])[:4])
 
         for p, d in docs.items():
@@ -596,6 +673,9 @@ class Evidence:
                     item['accepted_baseline'] = True
                     item['notes'].append('用户已认可并保留的原 human walk 透明动画。')
                     if pair not in wanted:
+                        item['group'] = 'unbound'
+                        item['active'] = False
+                        item['scope_revision'] = 'superseded-history'
                         retained.append(item)
                     continue
                 if item['group'] == 'production':
@@ -607,18 +687,20 @@ class Evidence:
                     item['media'].setdefault('art', old_art[item['character']])
                 item['active'] = False
                 item['queued'] = False
-                item['notes'].append('历史素材 / 待本体复用：未认定符合 body-motion-v3；技能 VFX 由游戏运行时实现。')
+                item['notes'].append('历史素材 / 待独立复用审核：不计当前新目标；技能 VFX 由游戏运行时实现。')
                 retained.append(item)
             values = list(wanted.values()) + retained
             coverage_summary = {'batch_action_tasks': len(wanted), 'batch_characters': len({cid for cid, _ in wanted})}
         # Read the explicit integration receipt, not the game's config or registry.
-        for parent in {p.parent for p in self.coverage}:
+        for parent in self.source_parents:
             receipt_path = parent / 'human-0-walk-integration.json'
+            if not self.permitted(receipt_path.resolve()):
+                continue
             receipt = read(receipt_path)
             if not receipt or receipt.get('character') != 'human-0' or receipt.get('action') != 'walk':
                 continue
             for item in values:
-                if item['group'] != 'production' or (item['character'], item['action']) != ('human-0', 'walk'):
+                if (item['character'], item['action']) != ('human-0', 'walk'):
                     continue
                 if (receipt.get('user_source_accepted') is True
                         and receipt.get('source_video_sha256') == item.get('current_video_sha256')
@@ -632,14 +714,132 @@ class Evidence:
                     stage(item, 6, 'done', '接入凭据记录已写入 motion.json · 无损共享裁剪')
                     evidence(item, receipt_path)
         for item in values:
+            receipt_ref = integration_records.get((item['character'], item['action']))
+            if receipt_ref and item['group'] == 'production' and item.get('reuse_sample_verified'):
+                receipt_path = Path(receipt_ref[0]).resolve()
+                if self.permitted(receipt_path) and receipt_path.is_file() and self.digest(receipt_path) == receipt_ref[1]:
+                    receipt = read(receipt_path) or {}
+                    action_record = next((a for a in receipt.get('actions', []) if isinstance(a, dict) and a.get('action') == item['action']), None)
+                    if (receipt.get('character') == item['character'] and receipt.get('status') in {'integrated_pending_engine_test', 'integrated', 'integrated_and_targeted_engine_tests_passed'}
+                            and action_record and action_record.get('sample_sha256') == item.get('reuse_sample_sha256')
+                            and action_record.get('review_sha256') == item.get('reuse_review_sha256')
+                            and action_record.get('count') == len(item['media'].get('frames', []))
+                            and re.fullmatch(r'[a-f0-9]{64}', str(action_record.get('atlas_sha256', '')))
+                            and re.fullmatch(r'[a-f0-9]{64}', str(receipt.get('motion_sha256', '')))):
+                        stage(item, 6, 'recorded', '已接入 · 接入凭据与当前 sample/review 匹配；引擎验证待核对')
+                        evidence(item, receipt_path)
+                        item['integration'] = {'recorded': True, 'receipt_sha256': receipt_ref[1], 'engine_validation': 'pending'}
+                        validation_path = receipt_path.parent / 'validation.json'
+                        validation = read(validation_path) or {}
+                        if (validation.get('character') == item['character'] and validation.get('status') == 'integrated_and_targeted_engine_tests_passed'
+                                and validation.get('resource_import_exit_code') == 0 and validation.get('routing_failures') == 0
+                                and validation.get('combat_geometry_failures') == 0):
+                            stage(item, 6, 'done', '已接入 · 导入及引擎定向检查通过（非全游戏目视通关）')
+                            item['integration']['engine_validation'] = 'passed'
+                            evidence(item, validation_path)
+                            map_path = receipt_path.parent / 'validation-v5-map.json'
+                            map_report = read(map_path) or {}
+                            map_source = Path(map_report['source_map']).resolve() if isinstance(map_report.get('source_map'), str) else None
+                            if (map_report.get('status') == 'published_full_v5_map_and_targeted_tests_passed'
+                                    and item['character'] + '/' + item['action'] in map_report.get('real_new_clips_integrated', [])
+                                    and map_report.get('godot_failures') == 0 and isinstance(map_report.get('godot_checks'), int)
+                                    and map_report['godot_checks'] > 0 and map_source and self.permitted(map_source)
+                                    and map_source.is_file() and self.digest(map_source) == map_report.get('map_sha256')):
+                                count = map_report['godot_checks']
+                                stage(item, 6, 'done', '已接入 · 导入/引擎验证通过 · v5 映射 ' + str(count) + ' 项检查通过')
+                                item['integration']['map_checks'] = count
+                                evidence(item, map_path)
             if item['group'] == 'production' and not item.get('current_still_attempt'):
                 item.setdefault('mode', 'existing_image')
             item['notes'] = list(dict.fromkeys(item['notes']))
             states = [s['state'] for s in item['stages']]
             item['status'] = 'completed' if item.get('completed_baseline') else ('failed' if 'failed' in states else ('waiting' if 'waiting' in states else 'pending'))
-        values.sort(key=lambda v: (not v.get('active', False), v['group'] != 'production', v['character'], v['action']))
+        values = [v for v in values if v['group'] == 'production' and v.get('scope_revision') == self.scope_policy and v['action'] in CURRENT_ACTIONS]
+        for item in values:
+            item.pop('attempts', None)
+            item['mode'] = 'existing_image'
+        # Publication links supplement receipts, never create jobs or old rows.
+        for parent in self.source_parents:
+            links_path = parent / 'seedance-v5' / 'registry-links.json'
+            if not self.permitted(links_path.resolve()):
+                continue
+            links = read(links_path) or {}
+            if links.get('kind') != 'canonical_motion_integration_links' or not isinstance(links.get('entries'), dict):
+                continue
+            for item in values:
+                entry = links['entries'].get(item['character'] + '/' + item['action'])
+                if not isinstance(entry, dict) or entry.get('status') != 'integrated_tested':
+                    continue
+                if (entry.get('character'), entry.get('action')) != (item['character'], item['action']):
+                    continue
+                if not item.get('current_video_sha256') or entry.get('source_video_sha256') != item['current_video_sha256']:
+                    continue
+                if entry.get('count', 0) <= 0 or entry['count'] != len(item['media'].get('frames', [])):
+                    continue
+                paths = {}
+                for key in ('sample', 'review', 'integration_receipt', 'validation'):
+                    value = entry.get(key)
+                    if not isinstance(value, str) or re.search(r'^[a-z]+://|^\\\\|^//', value, re.I):
+                        break
+                    path = Path(value)
+                    path = (path if path.is_absolute() else links_path.parent / path).resolve()
+                    if path.suffix.lower() != '.json' or not self.permitted(path) or not path.is_file():
+                        break
+                    paths[key] = path
+                if len(paths) != 4 or any(self.digest(path) != entry.get(key + '_sha256') for key, path in paths.items()):
+                    continue
+                receipt = read(paths['integration_receipt']) or {}
+                action_record = next((a for a in receipt.get('actions', []) if isinstance(a, dict) and a.get('action') == item['action']), {})
+                metadata = action_record.get('metadata') or {}
+                if (receipt.get('character') != item['character'] or receipt.get('status') not in {'integrated_pending_engine_test', 'integrated', 'integrated_and_targeted_engine_tests_passed'}
+                        or action_record.get('sample_sha256', metadata.get('sample_sha256')) != entry['sample_sha256']
+                        or action_record.get('review_sha256') != entry['review_sha256']
+                        or action_record.get('count') != entry['count']
+                        or not re.fullmatch(r'[a-f0-9]{64}', str(entry.get('atlas_sha256', '')))
+                        or action_record.get('atlas_sha256') != entry['atlas_sha256']):
+                    continue
+                report = read(paths['review']) or {}
+                approved = (report.get('character') == item['character'] and report.get('action') == item['action']
+                            and report.get('status') in {'approved', 'approved_for_integration'}
+                            and report.get('sample_sha256') == entry['sample_sha256'])
+                technical_reuse = (item.get('reuse_approval_kind') == 'technical' and report.get('status') == 'approved_for_reuse'
+                                   and entry.get('reuse_decision_sha256') == entry['review_sha256'])
+                if not approved and not technical_reuse and item['stages'][5]['state'] != 'done':
+                    continue
+                gif = self.media(entry.get('gif'), links_path, registry)
+                if gif:
+                    item['media']['gif'] = gif
+                evidence(item, links_path)
+                for path in paths.values():
+                    evidence(item, path)
+                if item['stages'][6]['state'] == 'done':
+                    continue
+                stage(item, 5, 'done', '技术复核通过 · 非逐帧用户批准')
+                stage(item, 6, 'recorded', '已接入 · canonical sample/review/atlas 凭据匹配')
+                item['integration'] = {'recorded': True, 'receipt_sha256': entry['integration_receipt_sha256'], 'engine_validation': 'pending'}
+                validation = read(paths['validation']) or {}
+                if (validation.get('character') == item['character'] and validation.get('status') == 'passed'
+                        and validation.get('integration_receipt_sha256') == entry['integration_receipt_sha256']
+                        and validation.get('import_exit_code') == 0 and validation.get('publication_failures') == 0
+                        and validation.get('runtime_routing_failures') == 0
+                        and isinstance(validation.get('publication_checks'), int) and validation['publication_checks'] > 0
+                        and isinstance(validation.get('runtime_routing_checks'), int) and validation['runtime_routing_checks'] > 0):
+                    stage(item, 6, 'done', '已接入 · 发布 ' + str(validation['publication_checks']) + ' / 路由 ' + str(validation['runtime_routing_checks']) + ' 项检查通过（非全游戏目视通关）')
+                    item['integration']['engine_validation'] = 'passed'
+        values.sort(key=lambda v: (v['character'], v['action']))
+        coverage_summary = {'batch_action_tasks': len(values), 'batch_characters': len({v['character'] for v in values})}
+        sources = [s for s in sources if s['kind'] == '当前全目标']
+        if not values:
+            warnings.append('当前全角色三动作 scope 尚未接入；不使用已停止范围代替，不声明任何任务已提交。')
+        used = set()
+        for item in values:
+            for value in item['media'].values():
+                for url in value if isinstance(value, list) else [value]:
+                    if isinstance(url, str) and url.startswith('/media/'):
+                        used.add(url.rsplit('/', 1)[-1])
+        registry = {key: path for key, path in registry.items() if key in used}
         snapshot = {'schema_version': 1, 'ui_version': VIEW_VERSION, 'scope_revision': self.scope_policy, 'items': values, 'sources': sources, 'warnings': list(dict.fromkeys(warnings)), 'labels': LABELS,
-                    'updated_at': datetime.now(timezone.utc).isoformat(), 'poll_seconds': 3, 'coverage_summary': coverage_summary,
+                    'updated_at': datetime.now(timezone.utc).isoformat(), 'poll_seconds': 3, 'coverage_summary': coverage_summary, 'execution': execution,
                     'counts': {'actions': len(values), 'production': sum(v['group'] == 'production' and (not v.get('accepted_baseline') or v.get('scope_revision') == self.scope_policy) for v in values), 'failed': sum(v['status'] == 'failed' for v in values)}}
         with self.lock:
             self.files, self.snapshot = registry, snapshot
@@ -682,6 +882,91 @@ $('search').oninput=()=>{gallerySignature='';detailSignature='';renderGallery()}
 '''
 
 
+PAGE = (PAGE.replace('3.4', VIEW_VERSION)
+        .replace('真实 Veo 原视频', '真实原视频')
+        .replace('Veo 已提交 · 等待结果', '视频已提交 · 等待结果')
+        .replace('Veo 视频 · 尚无本地结果', '视频 · 尚无本地结果')
+        .replace('已有原画可直接进入 Veo', '已有原画可直接进入视频生成')
+        .replace("i.group==='production'&&i.accepted_baseline&&i.media.frames?.length", "i.accepted_baseline&&i.media.frames?.length")
+        .replace('function renderLive(){', 'function renderLegacyLive(){')
+        .replace('</script>', r'''
+function renderLive(){
+ const pilot=data.scope_revision==='body-motion-v4-pilot-six';
+ if(!pilot){renderLegacyLive();return}
+ const current=data.items.filter(i=>i.group==='production'),jobs=current.filter(i=>i.video_job);
+ const historical=prefix=>data.items.filter(i=>i.group!=='production'&&i.video_job&&i.evidence.some(p=>p.startsWith(prefix)));
+ const first=historical('batch-01/'),second=historical('body-motion-v3-driver/');
+ const completed=list=>list.filter(i=>['succeeded','completed'].includes(i.video_job.state)).length;
+ const submitted=jobs.filter(i=>i.video_job.has_external_job_id).length;
+ const unknown=first.filter(i=>i.video_job.state==='submission_unknown').length;
+ const signature=JSON.stringify([current.map(i=>[i.id,i.queue_state,i.video_job,i.model,i.cost_points,i.media.video]),completed(first),unknown,completed(second)]);
+ if(signature===liveSignature)return;
+ liveSignature=signature;
+ const models=[...new Set(jobs.map(i=>i.model).filter(Boolean))];
+ const costs=jobs.filter(i=>typeof i.cost_points==='number');
+ const price=costs.length?`实际费用已记录 ${costs.length} 条，合计 ${costs.reduce((sum,i)=>sum+i.cost_points,0)} points`:'实际价格待任务凭据确认';
+ $('live-jobs').replaceChildren(el('p',`${models.join(' / ')||'Seedance2.0Fast（请求模型）'} 六试样（2角色） · 已载入 ${current.length}/6 个目标${current.length?'':' · 清单尚未就绪'} · ${submitted} 个真实回执 · ${completed(jobs)} 已完成 · ${jobs.filter(i=>i.media.video).length} 个本地视频可看 · ${price}。历史 Veo 批01：${completed(first)} completed + ${unknown} unknown；旧 v3 批：${completed(second)} completed，不计当前进度。`,'live-count'));
+ const strip=el('div',undefined,'live-strip');
+ for(const i of jobs.sort((a,b)=>b.updated_at-a.updated_at)){
+  const button=el('button',undefined,'live-task');
+  if(i.media.art){const img=el('img');img.src=i.media.art;img.alt=i.character;button.append(img)}
+  button.append(el('span',i.character+' / '+i.action+' · '+i.video_job.state+(i.media.video?' · 查看原视频':'')+(i.model?' · '+i.model:'')));
+  button.onclick=()=>{heroChoice=i.id;heroSignature='';renderHero()};strip.append(button);
+ }
+ $('live-jobs').append(strip);
+}
+</script>'''))
+
+
+# Build the served page from the established visual styles and media controls,
+# not the retired navigation/renderers. No archived rows or routes enter this UI.
+_style = re.search(r'<style>(.*?)</style>', PAGE, re.S).group(1)
+_helpers = '\n'.join(line for line in re.search(r'<script>(.*?)</script>', PAGE, re.S).group(1).splitlines()
+                     if line.startswith(('function el(', 'function enlarge(', 'function panel(', 'function framePanel(', 'function stopInside(', 'function displayName(')))
+_helpers = _helpers.replace("info.textContent=(index+1)+' / '+frames.length", "info.textContent=(index+1)+' / '+frames.length;p.dispatchEvent(new CustomEvent('framechange',{detail:index}))")
+PAGE = ('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>全角色三动作实时队列 · v' + VIEW_VERSION + '</title><style>' + _style + r'''
+.gallery{display:block}.matrix-role{margin:10px 0;padding:10px;background:#17242e;border:1px solid #38515e;border-radius:8px}.matrix-head{display:flex;align-items:center;gap:12px;margin-bottom:9px}.matrix-head img{width:70px;height:90px;object-fit:contain}.matrix-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}.matrix-cell{min-width:0;padding:9px;border:1px solid #344b58;border-radius:6px}.matrix-cell p{font-size:11px;overflow-wrap:anywhere}.matrix-cell .stage{height:160px}.matrix-cell button{width:100%;margin-top:6px;font-size:12px}.matrix-cell .controls button{width:auto}.pipeline{color:#b2c7d2}.matrix-cell .panel{margin-top:8px}@media(max-width:560px){.matrix-actions{grid-template-columns:1fr}.matrix-cell .stage{height:180px}}
+</style><main><header><h1>全角色三动作实时队列 <span class="version">v''' + VIEW_VERSION + r'''</span></h1><span id="live">读取当前范围…</span></header>
+<div id="warnings" role="status"></div><div id="summary" class="summary"></div><section id="live-jobs" aria-label="本轮真实提交"></section><section id="hero" hidden aria-label="当前产物与同步复核"></section>
+<div class="toolbar"><input id="search" placeholder="搜索角色 / 攻击起手 / 行走 / 死亡" aria-label="搜索当前队列"><button id="refresh">刷新</button></div>
+<section id="gallery" class="gallery" aria-label="全角色三动作矩阵"></section><footer>只读当前范围的 job / queue / sample。供应商完成、下载、抽帧、复核、入库分别计数；缺证据不视为完成。每 3 秒更新。</footer></main>
+<dialog id="lightbox" class="lightbox"><button id="close-image">关闭</button><img id="large-image" alt="本地产物预览"></dialog><script>
+const VIEW_VERSION=__CURRENT_VIEW_VERSION_JSON__,$=id=>document.getElementById(id),players=new Set();
+const ACTIONS=[['body_attack','攻击起手'],['walk','行走'],['death','死亡']];
+let data={items:[],labels:[]},busy=false,matrixSignature='',heroSignature='',chosen=null,syncReview=false;
+''' + _helpers + r'''
+function provider(item){const job=item.video_job;if(!job){const q=item.queue_state||'';if(/reuse/.test(q))return '复用待审';if(/hold|blocked|failed/.test(q))return '受阻 · '+q;if(/ready_for_submit|prepared/.test(q))return '待提交（尚无供应商回执）';return '未准备 / 尚无提交证据'}const labels={prepared:'待提交',created:'待提交',draft:'未准备',submitted:'已提交 / 排队',queued:'已提交 / 排队',pending:'供应商排队',processing:'生成中',running:'生成中',polling:'等待供应商结果',waiting:'等待供应商结果',succeeded:'供应商已完成',completed:'供应商已完成',failed:'失败',error:'失败',cancelled:'已取消',submission_unknown:'提交结果待确认，不能据此重试'};return labels[job.state]||job.state}
+function stage(item,index){return item.stages?.[index]?.text||'未记录'}
+function review(item,sync=false){chosen=item.id;syncReview=sync;heroSignature='';renderHero();$('hero').scrollIntoView({block:'start',behavior:'smooth'})}
+function makePreview(item){const root=el('article',undefined,'hero'),head=el('div',undefined,'herohead');head.append(el('h2',displayName(item)+' / '+(ACTIONS.find(a=>a[0]===item.action)?.[1]||item.action)));root.append(head);const media=el('div',undefined,'media');let frames=null,video=null;if(item.media.frames?.length&&(syncReview||!item.media.gif)){frames=framePanel(item,true);media.append(frames)}else if(item.media.gif)media.append(panel('实际透明 GIF',item.media.gif,'image',true));if(item.media.video){const p=panel('实际原视频',item.media.video,'video',true);video=p.querySelector('video');media.append(p)}if(item.media.art)media.append(panel('当前角色原画',item.media.art,'image',true));if(frames&&video&&item.times?.length===item.media.frames.length){frames.addEventListener('framechange',event=>{const time=Number(item.times[event.detail]);if(Number.isFinite(time)){video.pause();video.currentTime=time}});root.append(el('p','同步复核：播放或逐帧操作透明序列，原视频同步定位到记录时间。','notice'))}root.append(media);root.append(el('p',provider(item)+' · '+stage(item,4)+' · '+stage(item,5)+' · '+stage(item,6),'compact'));return root}
+function renderLiveJobs(){const root=$('live-jobs'),jobs=data.items.filter(i=>i.video_job?.has_external_job_id).sort((a,b)=>Number(/succeeded|completed/.test(a.video_job.state))-Number(/succeeded|completed/.test(b.video_job.state))||b.updated_at-a.updated_at);root.replaceChildren(el('h2','本轮真实提交 · '+jobs.length+' 条（不含复用）'));if(data.execution?.paused)root.append(el('p','执行已暂停：'+(data.execution.reason||'原因未记录')+'；已付任务状态如下，未提交项不算完成。','alert'));if(!jobs.length)root.append(el('p','当前尚无真实视频提交回执。','muted'));for(const item of jobs){const line=el('div',undefined,'compact'),label=ACTIONS.find(a=>a[0]===item.action)?.[1]||item.action;line.append(el('strong',displayName(item)+' / '+label),el('span',provider(item),'tag'),el('span',item.media.video?'下载完成':'尚未下载','tag'),el('span',stage(item,4),'tag'));if(item.media.video||item.media.frames?.length||item.media.gif){const button=el('button','看产物');button.onclick=()=>review(item,true);line.append(button)}root.append(line)}}
+function renderHero(){renderLiveJobs();const candidates=data.items.filter(i=>i.video_job?.has_external_job_id&&(i.media.video||i.media.gif||i.media.frames?.length));const item=data.items.find(i=>i.id===chosen)||candidates.sort((a,b)=>b.updated_at-a.updated_at)[0];$('hero').hidden=!item;if(!item){stopInside($('hero'));$('hero').replaceChildren();heroSignature='';return}const signature=JSON.stringify([item,syncReview]);if(signature===heroSignature)return;heroSignature=signature;stopInside($('hero'));$('hero').replaceChildren(makePreview(item))}
+function renderMatrix(){const query=$('search').value.trim().toLowerCase(),groups=new Map();for(const item of data.items){if(!groups.has(item.character))groups.set(item.character,[]);groups.get(item.character).push(item)}const visible=[...groups].filter(([id,items])=>!query||JSON.stringify([id,items.map(i=>[i.name,i.aliases,i.action,ACTIONS.find(a=>a[0]===i.action)?.[1]])]).toLowerCase().includes(query));const signature=JSON.stringify(visible);if(signature===matrixSignature)return;matrixSignature=signature;stopInside($('gallery'));$('gallery').replaceChildren();for(const [id,items]of visible){const card=el('article',undefined,'matrix-role'),head=el('div',undefined,'matrix-head'),reference=items.find(i=>i.media.art)||items[0];if(reference.media.art){const img=el('img');img.src=reference.media.art;img.alt=displayName(reference);img.loading='lazy';head.append(img)}head.append(el('h2',displayName(reference)+' · '+id));card.append(head);const columns=el('div',undefined,'matrix-actions');for(const [action,label]of ACTIONS){const cell=el('section',undefined,'matrix-cell'),item=items.find(i=>i.action===action);cell.append(el('h3',label+' / '+action));if(!item){cell.append(el('p','当前 scope 未列出此项，未创建任务'));columns.append(cell);continue}cell.append(el('p','供应商：'+provider(item),'pipeline'));cell.append(el('p','下载：'+(item.media.video?'下载完成，本地原片可看':'尚无本地原片'),'pipeline'));cell.append(el('p','透明：'+stage(item,4),'pipeline'));cell.append(el('p','复核：'+stage(item,5),'pipeline'));cell.append(el('p','游戏：'+stage(item,6),'pipeline'));if(item.failure_reason)cell.append(el('p','受阻原因：'+item.failure_reason,'alert'));if(item.video_job&&/failed|error/.test(item.video_job.state)&&!item.failure_reason)cell.append(el('p','任务失败；安全摘要未记录，具体原因保留在本地 job。','alert'));if(item.model)cell.append(el('p','模型：'+item.model,'muted'));if(typeof item.cost_points==='number')cell.append(el('p','实际费用：'+item.cost_points+' points','muted'));if(item.media.gif)cell.append(panel('实际透明 GIF',item.media.gif));else if(item.media.frames?.length)cell.append(framePanel(item,false));else if(item.media.video){const p=panel('实际原片',item.media.video,'video');p.querySelector('video').preload='none';cell.append(p)}if(item.media.art||item.media.video||item.media.gif||item.media.frames?.length){const button=el('button',item.times?.length&&item.media.frames?.length?'原画 / 原片 / 同步复核':'查看原画 / 原片 / 透明产物');button.onclick=()=>review(item,true);cell.append(button)}columns.append(cell)}card.append(columns);$('gallery').append(card)}if(!data.items.length)$('gallery').append(el('p','全角色 37 × 3 = 111 的请求计划等待当前 scope。不会用旧范围或旧任务填充进度。','empty'))}
+function renderSummary(){const items=data.items,total=items.length,characters=new Set(items.map(i=>i.character)).size,jobs=items.filter(i=>i.video_job),downloaded=items.filter(i=>i.media.video).length,transparent=items.filter(i=>i.media.frames?.length||i.media.gif).length,integrated=items.filter(i=>['done','recorded'].includes(i.stages?.[6]?.state)).length,failed=items.filter(i=>i.status==='failed'||/hold|blocked/.test(i.queue_state||'')).length;$('summary').textContent=`当前范围：${characters} 角色 / ${total} 目标 · 真实提交回执 ${jobs.filter(i=>i.video_job.has_external_job_id).length} · 下载 ${downloaded}/${total} · 透明产物 ${transparent}/${total} · 接入记录 ${integrated}/${total} · 失败/受阻 ${failed}。${data.scope_revision||'等待范围'}`}
+async function refresh(){if(busy)return;busy=true;try{const response=await fetch('/api/progress',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const next=await response.json();if(next.ui_version!==VIEW_VERSION){if(parseFloat(next.ui_version)<parseFloat(VIEW_VERSION))throw Error('响应来自不匹配的旧进程，请主任务核对监听 PID');const url=new URL(location.href);url.searchParams.set('v',next.ui_version);location.replace(url);return}data=next;$('live').textContent='v'+VIEW_VERSION+' · PID '+(response.headers.get('X-Progress-Process-Id')||'?')+' · '+(data.updated_at?new Date(data.updated_at).toLocaleTimeString():'读取中');$('warnings').replaceChildren(...(data.warnings||[]).map(w=>el('p',w,'alert')));renderSummary();renderHero();renderMatrix()}catch(error){$('live').textContent='连接待恢复 · '+error.message}finally{busy=false}}
+$('search').oninput=()=>{matrixSignature='';renderMatrix()};$('refresh').onclick=refresh;refresh();setInterval(refresh,3000);document.addEventListener('visibilitychange',()=>{if(document.hidden){for(const p of players)p.stop();document.querySelectorAll('video').forEach(v=>v.pause())}else refresh()});
+</script></html>''')
+
+
+PAGE = re.sub(r'^function provider\(item\).*$', r'''function localStage(item){if(item.reuse_sample_verified&&item.stages?.[5]?.state==='done')return '已确认复用，不新投';const names={needs_prepared_reference:'待准备参考图',needs_side_reference:'待主角侧面参考图',needs_reference:'待参考图',needs_frozen_design_binding:'待冻结设计/输入绑定',needs_reference_upload:'待身份上传',ready_to_prepare:'可本地准备',ready_for_prepare:'可本地准备',prepared:'已准备，待提交',reused:'复用记录待凭据核验',reuse_accepted_verified:'复用记录待凭据核验',candidate_reuse:'复用待审，不重投',reuse_pending_final_review:'复用待最终审查，不重投',planned:'未准备',failed:'本地失败/受阻'};return names[item.queue_state]||item.queue_state||'未准备'}
+function provider(item){const job=item.video_job;if(!job){if(item.reuse_sample_verified&&item.stages?.[5]?.state==='done')return '本轮不提交 · 复用已完成素材';if(item.queue_state==='reused')return '本轮不提交 · 复用凭据待核验';return '未提交（无供应商 job 回执）'}const labels={prepared:'待提交',created:'待提交',draft:'未准备',submitted:'已提交 / 排队',queued:'已提交 / 排队',pending:'供应商排队',processing:'生成中',running:'生成中',polling:'等待供应商结果',waiting:'等待供应商结果',succeeded:'供应商已完成',completed:'供应商已完成',failed:'失败',error:'失败',cancelled:'已取消',submission_unknown:'提交结果待确认，不能据此重试'};return labels[job.state]||job.state}''', PAGE, flags=re.M)
+PAGE = PAGE.replace("cell.append(el('p','供应商：'+provider(item),'pipeline'));", "cell.append(el('p','准备/复用：'+localStage(item),'pipeline'));cell.append(el('p','供应商：'+provider(item),'pipeline'));")
+
+
+PAGE = PAGE.replace('__CURRENT_VIEW_VERSION_JSON__', json.dumps(VIEW_VERSION))
+PAGE = PAGE.replace("i.status==='failed'||/hold|blocked/.test(i.queue_state||'')", "i.status==='failed'||i.blocked===true||/hold|blocked|keycollision/.test(i.queue_state||'')")
+
+
+class ProgressHTTPServer(ThreadingHTTPServer):
+    allow_reuse_address = False
+
+    def server_bind(self):
+        if os.name == 'nt' and hasattr(socket, 'SO_EXCLUSIVEADDRUSE'):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 class Handler(BaseHTTPRequestHandler):
     protocol_version = 'HTTP/1.1'
 
@@ -696,6 +981,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Pragma', 'no-cache')
         self.send_header('Expires', '0')
         self.send_header('X-Progress-View-Version', VIEW_VERSION)
+        self.send_header('X-Progress-Process-Id', str(os.getpid()))
+        self.send_header('X-Progress-Scope', self.server.evidence.scope_policy or 'unspecified')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Security-Policy', "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
@@ -775,16 +1062,23 @@ def main():
     parser.add_argument('--coverage', action='append', default=[], help='Explicit coverage JSON; may appear later.')
     parser.add_argument('--media-root', action='append', default=[], help='Additional explicitly allowed local media root.')
     parser.add_argument('--port', type=int, default=8805)
-    parser.add_argument('--scope-policy', choices=['body-motion-v3', 'body-motion-v3-r2'], help='Use only the named scope revision, without merging older targets.')
+    parser.add_argument('--scope-policy', default='current-three-actions', help='Current revision name. Superseded revisions are not displayed.')
+    parser.add_argument('--scope-spec', help='Exact current spec JSON; its sibling PREFIX-batch is watched automatically.')
     args = parser.parse_args()
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,100}', args.scope_policy):
+        parser.error('Scope policy must be a simple lowercase revision name.')
+    scope_spec = Path(args.scope_spec).resolve() if args.scope_spec else None
+    if scope_spec:
+        args.coverage.append(str(scope_spec))
+        args.root.append(str(scope_spec.parent / (scope_spec.stem.removesuffix('-spec') + '-batch')))
     roots, coverage, allowed = ([Path(v).resolve() for v in values] for values in (args.root, args.coverage, args.media_root))
     if any(str(p).startswith('\\\\') for p in roots + coverage + allowed):
         parser.error('Network shares are not allowed.')
-    server = ThreadingHTTPServer(('127.0.0.1', args.port), Handler)
+    server = ProgressHTTPServer(('127.0.0.1', args.port), Handler)
     server.daemon_threads = True
-    server.evidence = Evidence(roots, coverage, allowed, args.scope_policy)
+    server.evidence = Evidence(roots, coverage, allowed, args.scope_policy, scope_spec)
     threading.Thread(target=server.evidence.run, daemon=True).start()
-    print(f'Progress view: http://127.0.0.1:{args.port}/', flush=True)
+    print(f'Progress view: http://127.0.0.1:{args.port}/ pid={os.getpid()} version={VIEW_VERSION} scope={args.scope_policy}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

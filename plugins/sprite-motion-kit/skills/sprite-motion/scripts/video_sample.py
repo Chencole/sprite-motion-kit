@@ -95,19 +95,130 @@ def _read_json(path, label):
 def _local_result(job, state):
     results = state.get('local_results')
     if not isinstance(results, list) or len(results) != 1 or not isinstance(results[0], str):
-        raise ValueError('Veo action job must have exactly one downloaded local result')
+        raise ValueError('Action job must have exactly one downloaded local result')
     result = Path(results[0])
     if not result.is_absolute():
         result = (job / result).resolve()
     else:
         result = result.resolve()
     if not result.is_file() or result.suffix.lower() != '.mp4':
-        raise ValueError('Veo action job local result is missing or is not MP4 video')
+        raise ValueError('Action job local result is missing or is not MP4 video')
     return result
 
 
+def _validate_seedance_source(job, packet, state, design, binding):
+    """Recheck Nash's existing-image proof locally; never submit or infer review."""
+    import batch as coverage
+    import mxapi
+    import veo_workflow as identity_api
+
+    def require(condition, message):
+        if not condition:
+            raise ValueError('Seedance ' + message)
+
+    workflow = packet['workflow']
+    inputs = _read_json(job / 'prepare-inputs.json', 'Seedance preparation inputs')
+    provenance = _read_json(job / 'padding-provenance.json', 'Seedance padding provenance')
+    for key in ('batch', 'design', 'existing_image_job', 'original_image', 'prepared_image',
+                'character', 'action', 'expect_scope', 'expect_design'):
+        require(isinstance(inputs.get(key), str) and inputs[key].strip(), 'preparation inputs are incomplete')
+    batch_path = Path(inputs['batch']).resolve()
+    require(inputs['character'] == binding.get('character') and inputs['action'] == binding.get('action')
+            and coverage.binding(batch_path, inputs['character'], inputs['action']) == binding
+            and hashlib.sha256((batch_path / 'scope.json').read_bytes()).hexdigest() == inputs['expect_scope']
+            and inputs['expect_scope'] == binding.get('scope_sha256'), 'scope or coverage binding changed')
+    require(inputs['expect_design'] == _json_digest(design)
+            and _json_digest(_read_json(inputs['design'], 'Seedance authored design')) == inputs['expect_design'],
+            'authored design changed')
+    # The canonical body-strategy vocabulary is checked by the shared validator
+    # only when that strategy is selected. Existing frozen scopes retain their
+    # authored vocabulary, while allowing zero baked effects, including unlisted ones.
+    effects = design.get('effects')
+    require(isinstance(effects, dict) and effects.get('allowed') == []
+            and effects.get('allow_unlisted') is False
+            and isinstance(effects.get('forbidden'), list) and effects['forbidden']
+            and all(isinstance(value, str) and value.strip() for value in effects['forbidden']),
+            'body-only design must forbid both listed and unlisted effects')
+    source = workflow.get('identity_source')
+    require(workflow.get('source_mode') == 'existing_image' and isinstance(source, dict)
+            and source.get('kind') == 'reference_upload', 'requires a verified existing-image upload')
+    # identity_source reopens the immutable upload receipt, local roundtrip and
+    # current batch character; it does not contact the provider.
+    verified = identity_api.identity_source(batch_path, inputs['character'], inputs['existing_image_job'])
+    require(source == verified and workflow.get('identity_provider_origin') == verified.get('provider_origin'),
+            'verified upload identity changed')
+    require(isinstance(state.get('external_job_id'), str) and state['external_job_id'].strip()
+            and isinstance(state.get('provider_url'), str), 'downloaded job lacks its provider receipt')
+    mxapi.same_origin_reference(state['provider_url'], verified['provider_origin'])
+    mxapi.reference_image(state['result_urls'][0])
+
+    contract = workflow.get('model_contract')
+    require(isinstance(contract, dict)
+            and contract.get('route') == '/api/v2/video/seedance2-fast'
+            and mxapi.MODELS['seedance-2.0-fast']['submit'] == contract['route']
+            and contract.get('upstream_fixed_model') == 'doubao-seedance-2-0-fast-260128'
+            and contract.get('first_last') is False and contract.get('reference_role') == 'first_frame',
+            'model contract is not the fixed Fast first-frame route')
+    options = {key: contract.get(key) for key in ('resolution', 'ratio', 'duration', 'first_last', 'reference_role')}
+    require(packet.get('options') == options and packet.get('reference_count') == 1,
+            'request options do not match the model contract')
+    body = packet.get('body')
+    content = body.get('content') if isinstance(body, dict) else None
+    require(isinstance(content, list) and len(content) == 2 and isinstance(content[0], dict),
+            'request must contain one prompt and one first frame')
+    require(body == mxapi.build_payload('seedance-2.0-fast', content[0].get('text'), [verified['url']], **options),
+            'request does not match the verified first frame and Fast controls')
+
+    background_mode = design.get('background_mode')
+    background_rgba = identity_api.KEY_BACKGROUNDS.get(background_mode)
+    require(background_rgba is not None, 'padding requires an explicitly supported design key color')
+    original_path, prepared_path = (Path(inputs[key]).resolve() for key in ('original_image', 'prepared_image'))
+    require(original_path != prepared_path, 'prepared image must not overwrite original identity')
+    original_sha = hashlib.sha256(original_path.read_bytes()).hexdigest()
+    prepared_sha = hashlib.sha256(prepared_path.read_bytes()).hexdigest()
+    require(workflow.get('identity_original_sha256') == original_sha
+            and workflow.get('identity_character_sha256') == prepared_sha
+            and verified['character_sha256'] == prepared_sha and verified['local_sha256'] == prepared_sha,
+            'original/prepared image hashes do not match the verified identity')
+    images = []
+    for path in (original_path, prepared_path):
+        with Image.open(path) as image:
+            require(image.format == 'PNG' and getattr(image, 'n_frames', 1) == 1
+                    and all(0 < dimension <= 6000 for dimension in image.size), 'padding needs static bounded PNG images')
+            images.append(image.convert('RGBA'))
+    original, prepared = images
+    x, y = inputs.get('source_x'), inputs.get('source_y')
+    require(all(isinstance(value, int) and not isinstance(value, bool) for value in (x, y))
+            and x >= 0 and y >= 0 and x + original.width <= prepared.width
+            and y + original.height <= prepared.height and all(dimension >= 300 for dimension in prepared.size),
+            'padding must preserve the full original image without cropping')
+    expected = Image.new('RGBA', prepared.size, background_rgba)
+    expected.alpha_composite(original, (x, y))
+    box = original.getchannel('A').getbbox()
+    require(box is not None and expected.tobytes() == prepared.tobytes()
+            and not identity_api._contains_key_color(original_path, background_mode),
+            f'prepared pixels are not unchanged original art on a safe {background_mode} canvas')
+    expected_provenance = {
+        'schema': 1, 'kind': 'original_identity_pad_only',
+        'original_image': str(original_path), 'original_sha256': original_sha,
+        'prepared_image': str(prepared_path), 'prepared_sha256': prepared_sha,
+        'original_size': list(original.size), 'canvas': list(prepared.size),
+        'source_rect': [x, y, x + original.width, y + original.height], 'original_alpha_bbox': list(box),
+        'prepared_body_bbox': [x + box[0], y + box[1], x + box[2], y + box[3]],
+        'transform': {'kind': 'pad_only', 'scale': 1, 'resample': 'none',
+                      'background_rgba': list(background_rgba), 'composite': 'PIL.Image.alpha_composite'},
+        'provider_image_size_validated': True, 'generated_image': False, 'visual_review_inferred': False,
+    }
+    require(provenance == expected_provenance
+            and workflow.get('padding_provenance_sha256') == _json_digest(provenance),
+            'padding provenance changed or misstates the original/prepared transform')
+    return {'identity_original_sha256': original_sha, 'identity_prepared_sha256': prepared_sha,
+            'padding_provenance_sha256': _json_digest(provenance), 'model_contract': contract,
+            'identity_upload_request_sha256': verified['request_sha256']}
+
+
 def validate_generation_job(generation_job, video, expected_binding=None):
-    """Bind an input video to one downloaded project-bound Veo action job."""
+    """Bind a video to its downloaded project-bound Veo or Seedance action job."""
     if not isinstance(generation_job, (str, Path)):
         raise ValueError('Generation job path is required')
     job = Path(generation_job).resolve()
@@ -118,11 +229,13 @@ def validate_generation_job(generation_job, video, expected_binding=None):
     if _json_digest(packet) != state.get('request_sha256'):
         raise ValueError('Generation request changed after preparation')
     workflow = packet.get('workflow')
-    if (packet.get('kind') != 'video' or packet.get('model') != 'veo-3.1-fast'
-            or not isinstance(workflow, dict)
-            or workflow.get('kind') != 'project_bound_veo_action'
+    seedance = isinstance(workflow, dict) and workflow.get('kind') == 'project_bound_seedance_action'
+    expected_model = 'seedance-2.0-fast' if seedance else 'veo-3.1-fast'
+    expected_kind = 'project_bound_seedance_action' if seedance else 'project_bound_veo_action'
+    if (packet.get('kind') != 'video' or packet.get('model') != expected_model
+            or not isinstance(workflow, dict) or workflow.get('kind') != expected_kind
             or workflow.get('phase') != 'action_video'):
-        raise ValueError('Generation job is not a project-bound Veo action-video job')
+        raise ValueError('Generation job is not a supported project-bound Veo or Seedance action-video job')
     if (state.get('state') != 'succeeded' or not isinstance(state.get('result_urls'), list)
             or len(state['result_urls']) != 1 or not isinstance(state['result_urls'][0], str)):
         raise ValueError('Veo action job has not completed successfully')
@@ -159,11 +272,17 @@ def validate_generation_job(generation_job, video, expected_binding=None):
             or safe_rect[1] + clearance >= safe_rect[3] - clearance):
         raise ValueError('Veo action design safe rectangle collapses after its required clearance')
     background_mode = design.get('background_mode')
-    if background_mode not in ('green', 'magenta'):
+    if background_mode not in ('green', 'magenta', 'blue'):
         raise ValueError('Veo action design needs an explicit supported background_mode')
     source_mode = workflow.get('source_mode')
     if source_mode is not None and source_mode not in ('existing_image', 'reviewed_still'):
         raise ValueError('Unknown Veo image source mode')
+    seedance_evidence = {}
+    if seedance:
+        try:
+            seedance_evidence = _validate_seedance_source(job, packet, state, design, binding)
+        except (OSError, KeyError, TypeError) as exc:
+            raise ValueError('Seedance source proof is missing or invalid') from exc
     if source_mode == 'existing_image':
         source = workflow.get('identity_source')
         if (not isinstance(source, dict)
@@ -171,7 +290,7 @@ def validate_generation_job(generation_job, video, expected_binding=None):
                        for key in ('request_sha256', 'local_sha256', 'character_sha256', 'character_pixel_sha256'))
                 or source.get('character_sha256') != workflow.get('identity_character_sha256')
                 or not isinstance(packet.get('body'), dict)
-                or packet['body'].get('images') != [source.get('url')]
+                or (not seedance and packet['body'].get('images') != [source.get('url')])
                 or not isinstance(workflow.get('source_risk_notes'), str)
                 or not workflow['source_risk_notes'].strip()
                 or any(key.startswith('action_still_review') for key in workflow)):
@@ -191,6 +310,7 @@ def validate_generation_job(generation_job, video, expected_binding=None):
     if source_mode == 'existing_image':
         evidence['identity_character_sha256'] = workflow['identity_character_sha256']
         evidence['source_risk_notes'] = workflow['source_risk_notes']
+    evidence.update(seedance_evidence)
     return evidence, design
 
 
@@ -303,11 +423,16 @@ def _remove_background(image, mode, key_scope='edge-connected', black_sidebars=N
         rgb = rgba[:, :, :3].astype(np.int16)
         # Fixed thresholds for the whole clip: no per-frame fitting, erosion or
         # despill that can eat costume colors or cause a changing silhouette.
-        if mode == 'green':
+        if mode == 'blue':
+            from veo_workflow import BLUE_KEY_TOLERANCE
+            candidate = np.max(np.abs(rgb - np.array([0, 0, 255], dtype=np.int16)), axis=2) <= BLUE_KEY_TOLERANCE
+        elif mode == 'green':
             candidate = (rgb[:, :, 1] >= 150) & (rgb[:, :, 1] - np.maximum(rgb[:, :, 0], rgb[:, :, 2]) >= 80)
-        else:
+        elif mode == 'magenta':
             minimum = np.minimum(rgb[:, :, 0], rgb[:, :, 2])
             candidate = (minimum >= 150) & (minimum - rgb[:, :, 1] >= 80)
+        else:
+            raise ValueError('Unsupported video key color')
         mask = _edge_connected(candidate) if key_scope == 'edge-connected' else candidate
         if float(mask.mean()) < .01:
             raise ValueError(f'No usable edge-connected {mode} background')
@@ -337,7 +462,7 @@ def export_video(video, ffmpeg, out, *, character, action, start, duration, coun
         raise ValueError('Choose a finite interval between zero and sixty seconds')
     if type(count) is not int or not 2 <= count <= 120 or type(loop) is not bool:
         raise ValueError('Invalid frame count or loop contract')
-    if background not in ('magenta', 'green', 'alpha') or not str(review_notes).strip():
+    if background not in ('magenta', 'green', 'blue', 'alpha') or not str(review_notes).strip():
         raise ValueError('Choose explicit alpha/key extraction and describe the inspected interval')
     if key_scope not in ('edge-connected', 'all'):
         raise ValueError('Key scope must be edge-connected or all')
@@ -513,7 +638,7 @@ if __name__ == '__main__':
     parser.add_argument('--duration', type=float, required=True)
     parser.add_argument('--count', type=int, default=8)
     parser.add_argument('--loop', action='store_true')
-    parser.add_argument('--background', choices=['alpha', 'magenta', 'green'], required=True)
+    parser.add_argument('--background', choices=['alpha', 'magenta', 'green', 'blue'], required=True)
     parser.add_argument('--key-scope', choices=['edge-connected', 'all'], default='edge-connected',
                         help='Use all only after checking that the character has no key color; also removes enclosed background gaps')
     parser.add_argument('--black-sidebars', type=int, nargs=2, metavar=('LEFT', 'RIGHT'),

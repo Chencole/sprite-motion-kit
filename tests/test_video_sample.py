@@ -44,7 +44,7 @@ class VideoSampleTests(unittest.TestCase):
 
     def make_video(self, background='magenta', count=12, *, heights=None, lossy=False,
                    edge=False, edge_indices=None, durations=None, duplicate_endpoint=False):
-        colors = {'magenta': (255, 0, 255, 255), 'green': (0, 255, 0, 255),
+        colors = {'magenta': (255, 0, 255, 255), 'green': (0, 255, 0, 255), 'blue': (0, 0, 255, 255),
                   'alpha': (83, 122, 17, 0), 'opaque': (35, 35, 35, 255)}
         source = self.root / 'source'
         source.mkdir()
@@ -57,7 +57,7 @@ class VideoSampleTests(unittest.TestCase):
             y = 48 - (heights[i] if heights else 0)
             draw.rectangle((x, y, x + 27, y + 30), fill=(25, 45, 200, 255))
             # The key color inside the costume must survive background removal.
-            if background in ('magenta', 'green'):
+            if background in ('magenta', 'green', 'blue'):
                 draw.rectangle((x + 9, y + 8, x + 16, y + 15), fill=colors[background])
             if background == 'alpha':
                 draw.rectangle((x + 2, y - 1, x + 25, y - 1), fill=(70, 90, 210, 96))
