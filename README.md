@@ -1,6 +1,6 @@
 # Sprite Motion Kit
 
-**当前为私有实验版本，尚未证明能稳定生成自然动作。** The repository is private;
+**当前为实验版本，尚未证明能稳定生成自然动作。** The repository is private;
 installation requires repository access. No public release or model weights are
 being distributed as a finished animation solution.
 
